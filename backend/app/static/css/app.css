@@ -379,6 +379,31 @@ body {
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-size: 12px; color: var(--text-dim); font-weight: 500; }
 
+textarea {
+  width: 100%;
+  background: rgba(9, 13, 22, 0.85);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-family: var(--mono);
+  line-height: 1.6;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  /* 关键字多行自动换行：纵向可伸缩、横向不出现滚动条 */
+  resize: none;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  display: block;
+  min-height: 38px;
+}
+textarea::placeholder { color: var(--text-faint); }
+textarea:focus {
+  outline: none;
+  border-color: var(--pink);
+  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.15);
+}
+
 input[type="text"], select {
   width: 100%;
   background: rgba(9, 13, 22, 0.85);

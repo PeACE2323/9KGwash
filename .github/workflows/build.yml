@@ -36,6 +36,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_deliver
 
+      - name: 运行前端交互约束测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_ui_drag
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

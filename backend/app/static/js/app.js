@@ -191,6 +191,22 @@
     });
   }
 
+  /**
+   * 让 textarea 高度随内容自动增长（关键字换行用）。
+   * 先归零再按 scrollHeight 撑开，内容少时保持单行高度。
+   */
+  function autoGrow(el) {
+    if (!el || el.tagName !== "TEXTAREA") return;
+    el.style.height = "auto";
+    // +2 补偿边框，避免出现内部滚动条
+    el.style.height = Math.max(el.scrollHeight + 2, 38) + "px";
+  }
+
+  /** 批量重算所有关键字输入框高度（渲染后/窗口缩放时） */
+  function autoGrowAll() {
+    document.querySelectorAll("#rule-list .rule-keywords").forEach(autoGrow);
+  }
+
   function renderRules(rules) {
     const list = $("rule-list");
     const tpl = $("rule-tpl");
@@ -205,7 +221,8 @@
       const node = tpl.content.firstElementChild.cloneNode(true);
       node.dataset.idx = String(idx);
       node.dataset.id = rule.id || "";
-      node.setAttribute("draggable", "true");
+      // 注意：卡片本身不可拖动，只有 ⠿ 把手可拖，
+      // 否则在输入框内按住鼠标会变成拖动整条规则，无法选中文本。
 
       node.querySelector(".rule-name").value = rule.name || "";
       node.querySelector(".rule-kind").value = rule.kind || "jav";
@@ -214,6 +231,10 @@
       node.querySelector(".rule-keywords").value = (rule.keywords || []).join(", ");
       node.querySelector(".rule-mark").value = rule.mark || "";
       node.querySelector(".rule-target").value = rule.target_dir || "";
+
+      // 关键字过多时自动换行撑高（替代单行 input）
+      const kwEl = node.querySelector(".rule-keywords");
+      kwEl.addEventListener("input", () => autoGrow(kwEl));
 
       if (rule.enabled === false) node.classList.add("is-disabled");
       applyRuleKind(node);
@@ -251,9 +272,11 @@
 
     refreshRuleOrder();
     enableDragSort();
+    // 渲染后（含从配置回填的长关键字列表）立即计算一次高度
+    requestAnimationFrame(autoGrowAll);
   }
 
-  /* ---------- 拖动排序 ---------- */
+  /* ---------- 拖动排序（仅 ⠿ 把手可拖，输入框内可正常选字） ---------- */
   let dragNode = null;
 
   function enableDragSort() {
@@ -262,23 +285,30 @@
     list.dataset.dragBound = "1";
 
     list.addEventListener("dragstart", (e) => {
-      const node = e.target.closest(".rule-item");
+      // 只接受从 ⠿ 把手发起的拖动
+      const grip = e.target.closest ? e.target.closest(".rule-grip") : null;
+      if (!grip) {
+        e.preventDefault();
+        return;
+      }
+      const node = grip.closest(".rule-item");
       if (!node) return;
+
       dragNode = node;
       node.classList.add("is-dragging");
-      e.dataTransfer.effectAllowed = "move";
-      // Firefox 需要设置数据才会触发拖动
+      // 拖动时让浏览器显示整条规则的半透明快照
       try {
-        e.dataTransfer.setData("text/plain", "rule");
-      } catch (_) {}
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", node.dataset.id || "rule");
+        e.dataTransfer.setDragImage(node, 20, 20);
+      } catch (_) {
+        /* 某些浏览器不支持 setDragImage，忽略 */
+      }
     });
 
     list.addEventListener("dragend", () => {
       if (dragNode) dragNode.classList.remove("is-dragging");
       dragNode = null;
-      document.querySelectorAll("#rule-list .rule-item.is-drop-target").forEach((n) =>
-        n.classList.remove("is-drop-target")
-      );
       refreshRuleOrder();
       deliverMsg("顺序已调整，记得保存", "busy");
     });
@@ -286,7 +316,9 @@
     list.addEventListener("dragover", (e) => {
       if (!dragNode) return;
       e.preventDefault();
-      const over = e.target.closest(".rule-item");
+      e.dataTransfer.dropEffect = "move";
+
+      const over = e.target.closest ? e.target.closest(".rule-item") : null;
       if (!over || over === dragNode) return;
 
       const rect = over.getBoundingClientRect();
@@ -1052,6 +1084,8 @@
 
     window.addEventListener("resize", () => {
       if (window.innerWidth > 900) closeDrawer();
+      // 宽度变化会改变换行位置，需重算关键字输入框高度
+      if (state.currentView === "deliver") autoGrowAll();
     });
   }
 

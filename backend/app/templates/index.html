@@ -343,7 +343,7 @@
   <template id="rule-tpl">
     <div class="rule-item">
       <div class="rule-head">
-        <span class="rule-grip" title="按住拖动可调整执行顺序">⠿</span>
+        <span class="rule-grip" draggable="true" title="按住此把手拖动可调整执行顺序">⠿</span>
         <span class="rule-order"></span>
         <input type="text" class="rule-name" placeholder="规则名称">
         <select class="rule-kind">
@@ -366,7 +366,7 @@
       <div class="rule-body">
         <label class="field rule-kw-field">
           <span class="rule-kw-label">关键字（逗号分隔，不分大小写）</span>
-          <input type="text" class="rule-keywords" placeholder="restored, uncensored">
+          <textarea class="rule-keywords" rows="1" placeholder="restored, uncensored"></textarea>
         </label>
         <label class="field rule-mark-field">
           <span>标记（留空则不改名）</span>
