@@ -349,39 +349,79 @@
     </div>
   </div>
 
-  <!-- 规则卡片模板 -->
+  <!-- 规则卡片模板（紧凑可折叠：默认一行摘要，点击展开编辑） -->
   <template id="rule-tpl">
     <div class="rule-item">
-      <div class="rule-head">
-        <span class="rule-grip" draggable="true" title="按住此把手拖动可调整执行顺序">⠿</span>
-        <span class="rule-order"></span>
-        <input type="text" class="rule-name" placeholder="规则名称">
-        <select class="rule-kind">
-          <option value="jav">JAV 番号规则</option>
-          <option value="western">欧美番号规则</option>
-          <option value="other">普通关键字规则</option>
-          <option value="fallback">兜底规则</option>
-        </select>
-        <select class="rule-action">
-          <option value="move">移动</option>
-          <option value="copy">复制</option>
-        </select>
-        <label class="rule-enabled"><input type="checkbox" class="rule-enabled-cb"> 启用</label>
-        <span class="rule-move">
-          <button type="button" class="btn btn-ghost btn-xs rule-up" title="上移">▲</button>
-          <button type="button" class="btn btn-ghost btn-xs rule-down" title="下移">▼</button>
-        </span>
-        <button type="button" class="btn btn-ghost btn-xs rule-del">删除</button>
+      <!-- 折叠态：宽屏单行 / 窄屏两行 -->
+      <div class="rule-summary">
+        <div class="rule-row rule-row-top">
+          <span class="rule-grip" draggable="true" title="按住此把手拖动可调整执行顺序">⠿</span>
+          <span class="rule-order"></span>
+          <span class="rule-kind-badge"></span>
+          <span class="rule-name-text"></span>
+          <span class="rule-spacer"></span>
+          <span class="rule-state"></span>
+          <span class="rule-move">
+            <button type="button" class="btn btn-ghost btn-xs rule-up" title="上移">▲</button>
+            <button type="button" class="btn btn-ghost btn-xs rule-down" title="下移">▼</button>
+          </span>
+          <button type="button" class="btn btn-ghost btn-xs rule-del" title="删除此规则">✕</button>
+          <button type="button" class="rule-toggle" title="展开/收起">▾</button>
+        </div>
+        <div class="rule-row rule-row-bottom">
+          <span class="rule-kw-preview"></span>
+          <span class="rule-flow" title="命中后如何处理"></span>
+        </div>
       </div>
+
+      <!-- 展开态：编辑表单 -->
       <div class="rule-body">
+        <div class="rule-grid">
+          <label class="field">
+            <span>规则名称</span>
+            <input type="text" class="rule-name" placeholder="如：还原版投递">
+          </label>
+          <label class="field">
+            <span>规则类型</span>
+            <select class="rule-kind">
+              <option value="jav">JAV 番号规则</option>
+              <option value="western">欧美番号规则</option>
+              <option value="other">普通关键字规则</option>
+              <option value="fallback">兜底规则</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>投递方式</span>
+            <select class="rule-action">
+              <option value="move">移动</option>
+              <option value="copy">复制</option>
+            </select>
+          </label>
+          <label class="skill-check">
+            <input type="checkbox" class="rule-enabled-cb">
+            <span>启用此规则</span>
+          </label>
+        </div>
+
         <label class="field rule-kw-field">
           <span class="rule-kw-label">关键字（逗号分隔，不分大小写）</span>
           <textarea class="rule-keywords" rows="1" placeholder="restored, uncensored"></textarea>
         </label>
-        <label class="field rule-mark-field">
-          <span>标记（留空则不改名）</span>
-          <input type="text" class="rule-mark" placeholder="-U">
-        </label>
+
+        <div class="rule-grid rule-mark-row">
+          <label class="field rule-mark-field">
+            <span>标记</span>
+            <input type="text" class="rule-mark" placeholder="-U">
+          </label>
+          <label class="field rule-pos-field">
+            <span>标记位置</span>
+            <select class="rule-mark-pos">
+              <option value="after">番号后（DASS-787-U）</option>
+              <option value="before">番号前（U-DASS-787）</option>
+            </select>
+          </label>
+        </div>
+
         <label class="field rule-target-field">
           <span>目标目录（容器内路径）</span>
           <div class="input-with-btn">
@@ -389,9 +429,14 @@
             <button type="button" class="btn btn-ghost btn-sm rule-browse">浏览</button>
           </div>
         </label>
-      </div>
-      <div class="rule-fallback-tip">
-        兜底规则：前面所有规则都未命中时执行。仅处理<strong>通过体积阈值的媒体文件</strong>，原样投递、不改名。
+
+        <div class="rule-fallback-tip">
+          兜底规则：前面所有规则都未命中时执行。仅处理<strong>通过体积阈值的媒体文件</strong>，原样投递、不改名。
+        </div>
+        <div class="rule-western-tip">
+          欧美规则：关键字填<strong>厂牌</strong>（如 blackedraw），需同时命中厂牌且含「年.月.日」才会投递。
+          <strong>此类型不提供标记功能</strong>，文件将原样投递。
+        </div>
       </div>
     </div>
   </template>

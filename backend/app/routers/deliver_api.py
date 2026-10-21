@@ -170,6 +170,7 @@ def preview():
 
         kind = (rule or {}).get("kind", "jav")
         mark = (rule or {}).get("mark", "")
+        position = (rule or {}).get("mark_position", "after")
 
         jav_info = naming.find_fanhao(name)
         west_info = naming.find_western(name)
@@ -180,14 +181,16 @@ def preview():
             reason = "没有可用规则"
         elif kind == "jav":
             if jav_info and mark:
-                output = naming.insert_mark_after_fanhao(name, mark)
+                output = naming.apply_mark_to_fanhao(name, mark, position)
             elif not jav_info:
                 reason = "不含日本番号，实际执行时会被跳过"
         elif kind == "western":
-            if west_info and mark:
-                output = naming.insert_mark_after_western(name, mark)
-            elif not west_info:
+            # 欧美规则不提供标记功能，预览时原样返回
+            if not west_info:
                 reason = "不含「年.月.日」，实际执行时会被跳过"
+        elif kind == "other":
+            if mark:
+                output = naming.apply_mark(name, mark, position, prefer_fanhao=False)
 
         results.append(
             {
@@ -196,6 +199,8 @@ def preview():
                 "rule_kind": kind,
                 "fallback": fallback,
                 "matched_keyword": kw,
+                "mark": mark,
+                "mark_position": position,
                 "is_video": deliver.is_video(name),
                 "fanhao": jav_info["fanhao"] if jav_info else None,
                 "western_studio": west_info["studio"] if west_info else None,

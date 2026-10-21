@@ -68,9 +68,9 @@ def _normalize_rule(raw: dict, idx: int = 0) -> dict:
     """把前端传来的规则规范化，保证字段完整、类型正确。
 
     kind:
-        jav     命中后在 JAV 番号（厂牌-数字）后插标记，投递到目标目录
-        western 命中厂牌且含「年.月.日」时，在日期后插标记，投递到目标目录
-        other   命中后原样投递到目标目录，不改名
+        jav     命中后在 JAV 番号前/后插标记（由 mark_position 决定），投递到目标目录
+        western 命中厂牌且含「年.月.日」时原样投递，**不提供标记功能**
+        other   命中后按 mark_position 给文件名加标记（无番号意义），投递到目标目录
         fallback 兜底：前面所有规则都没命中时执行（仅媒体文件且过体积阈值）
     """
     kind = str(raw.get("kind", "jav")).lower()
@@ -83,13 +83,23 @@ def _normalize_rule(raw: dict, idx: int = 0) -> dict:
         keywords = [k.strip() for k in keywords.replace("，", ",").replace("\n", ",").split(",")]
     keywords = [str(k).strip() for k in (keywords or []) if str(k).strip()]
 
+    # 标记位置：before / after；兜底规则和欧美规则不使用标记
+    position = str(raw.get("mark_position", "after")).lower()
+    if position not in ("before", "after"):
+        position = "after"
+
+    mark = str(raw.get("mark") or "").strip()
+    if kind in ("western", "fallback"):
+        mark = ""
+
     return {
         "id": str(raw.get("id") or f"rule{idx + 1}"),
         "name": str(raw.get("name") or f"规则{idx + 1}").strip(),
         "kind": kind,
         "enabled": bool(raw.get("enabled", True)),
         "keywords": keywords,
-        "mark": str(raw.get("mark") or "").strip(),
+        "mark": mark,
+        "mark_position": position,
         "target_dir": str(raw.get("target_dir") or "").strip(),
         "action": "copy" if str(raw.get("action", "move")).lower() == "copy" else "move",
     }
@@ -330,11 +340,14 @@ def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
             result["reason"] = f"命中关键词[{kw}]但文件名不含日本番号，不投递"
             logger.warning(f"   [-] ⚠️ [投递] {filename} 命中JAV规则但未识别到番号，跳过")
             return result
-        # 未填写标记则不改名
+        # 未填写标记则不改名；有标记则按 mark_position 决定加在番号前还是后
         if rule.get("mark"):
-            new_name = naming.insert_mark_after_fanhao(filename, rule["mark"])
+            position = rule.get("mark_position", "after")
+            new_name = naming.apply_mark_to_fanhao(filename, rule["mark"], position)
+        pos_label = "番号前" if rule.get("mark_position") == "before" else "番号后"
         logger.info(f"   [-] 🏷️ [投递] 命中JAV规则[{rule['name']}]关键词[{kw}] "
-                    f"番号={info['fanhao']} 标记={rule.get('mark') or '无'}")
+                    f"番号={info['fanhao']} 标记={rule.get('mark') or '无'}"
+                    + (f"({pos_label})" if rule.get("mark") else ""))
 
     elif kind == "western":
         info = naming.find_western(filename)
@@ -342,16 +355,21 @@ def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
             result["reason"] = f"命中厂牌[{kw}]但文件名不含「年.月.日」，不投递"
             logger.warning(f"   [-] ⚠️ [投递] {filename} 命中欧美规则但未识别到日期，跳过")
             return result
-        if rule.get("mark"):
-            new_name = naming.insert_mark_after_western(filename, rule["mark"])
-        logger.info(f"   [-] 🏷️ [投递] 命中欧美规则[{rule['name']}]厂牌[{kw}] "
-                    f"日期={info['date']} 标记={rule.get('mark') or '无'}")
+        # 欧美规则只做厂牌匹配与投递，不提供标记功能
+        logger.info(f"   [-] 🏷️ [投递] 命中欧美规则[{rule['name']}]厂牌[{kw}] 日期={info['date']}")
 
     elif kind == "fallback":
         logger.info(f"   [-] 🏷️ [投递] 未命中任何关键字，执行兜底规则[{rule['name']}]")
 
-    else:  # other
-        logger.info(f"   [-] 🏷️ [投递] 命中普通规则[{rule['name']}]关键词[{kw}]")
+    else:  # other：普通关键字规则，支持在文件名前/后加标记
+        if rule.get("mark"):
+            position = rule.get("mark_position", "after")
+            new_name = naming.apply_mark(filename, rule["mark"], position, prefer_fanhao=False)
+            pos_label = "文件名前" if position == "before" else "文件名后"
+            logger.info(f"   [-] 🏷️ [投递] 命中普通规则[{rule['name']}]关键词[{kw}] "
+                        f"标记={rule['mark']}({pos_label})")
+        else:
+            logger.info(f"   [-] 🏷️ [投递] 命中普通规则[{rule['name']}]关键词[{kw}]")
 
     result["new_name"] = new_name
     result["rule"] = rule.get("name")

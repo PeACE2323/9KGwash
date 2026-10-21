@@ -156,6 +156,110 @@ def is_jav_filename(name: str) -> bool:
     return find_fanhao(name) is not None
 
 
+# ---------------------------------------------------------------------------
+# 标记位置：前 / 后
+# ---------------------------------------------------------------------------
+MARK_POSITIONS = ("after", "before")
+
+
+def _normalize_before_mark(mark: str) -> str:
+    """前置标记统一收尾为「标记 + 连字符」，便于紧贴番号。
+
+    ``U``    -> ``U-``
+    ``U-``   -> ``U-``
+    ``-U``   -> ``U-``（去掉前置连字符，避免出现 ``-U-DASS``）
+    ``[U]``  -> ``[U]``（自带收尾符号时原样使用）
+    """
+    m = (mark or "").strip()
+    if not m:
+        return m
+    # 去掉开头多余的分隔符
+    m = m.lstrip("-_")
+    if not m:
+        return m
+    if m[-1] in "-_.[]（）()【】":
+        return m
+    return m + "-"
+
+
+def insert_mark_before_fanhao(name: str, mark: str) -> str:
+    """在番号**前面**插入标记，番号及之后内容原样保留。
+
+    例：``www.98T.la@DASS-787無防備...mp4`` + mark ``U``
+        => ``www.98T.la@U-DASS-787無防備...mp4``
+        （标记紧贴番号前，发布站前缀仍在最前）
+
+    幂等：若番号前已经是该标记则不重复添加。
+    """
+    if not mark:
+        return name
+    info = find_fanhao(name)
+    if not info:
+        return name
+
+    start = info["start"]
+    prefix = name[:start]
+    pre_mark = _normalize_before_mark(mark)
+
+    # 幂等判断：番号前已带同一标记（只比较紧邻番号的那一段，避免误判）
+    core = pre_mark.rstrip("-_.")
+    if core:
+        # 匹配「标记 + 可选分隔符」正好贴在番号前
+        pattern = re.escape(core) + r"[-_. ]*$"
+        if re.search(pattern, prefix, re.IGNORECASE):
+            return name
+
+    return prefix + pre_mark + name[start:]
+
+
+def apply_mark_to_fanhao(name: str, mark: str, position: str = "after") -> str:
+    """按指定位置给含番号的文件名打标记。"""
+    if not mark:
+        return name
+    if str(position).lower() == "before":
+        return insert_mark_before_fanhao(name, mark)
+    return insert_mark_after_fanhao(name, mark)
+
+
+def insert_mark_to_plain_name(name: str, mark: str, position: str = "after") -> str:
+    """给「不含番号」的普通文件打标记（用于普通关键字规则）。
+
+    - after : ``Some.Video.mp4`` + ``_restored`` => ``Some.Video_restored.mp4``
+    - before: ``Some.Video.mp4`` + ``U-``        => ``U-Some.Video.mp4``
+
+    保留扩展名位置，前后两种方式都不会破坏扩展名。
+    """
+    if not mark:
+        return name
+    base, ext = os.path.splitext(name)
+    m = mark.strip()
+
+    if str(position).lower() == "before":
+        pre = m if m[-1] in "-_.[]（）()【】" else m + "-"
+        if base.startswith(pre):
+            return name
+        return pre + name
+
+    # 默认 after：追加到主干名末尾，扩展名保持最末
+    if base.endswith(m):
+        return name
+    sep = "" if m[:1] in "-_. []（）()【】" else "_"
+    return base + sep + m + ext
+
+
+def apply_mark(name: str, mark: str, position: str = "after", prefer_fanhao: bool = True) -> str:
+    """通用打标入口。
+
+    prefer_fanhao=True 且文件名含番号时按番号前/后插入；
+    否则按普通文件名追加/前置处理。
+    """
+    if not mark:
+        return name
+    if prefer_fanhao and find_fanhao(name):
+        return apply_mark_to_fanhao(name, mark, position)
+    return insert_mark_to_plain_name(name, mark, position)
+
+
 def split_name_ext(filename: str) -> tuple[str, str]:
     base, ext = os.path.splitext(filename)
     return base, ext

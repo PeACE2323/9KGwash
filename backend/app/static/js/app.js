@@ -169,9 +169,11 @@
     const kwInput = node.querySelector(".rule-keywords");
     const kwLabel = node.querySelector(".rule-kw-label");
     const tip = node.querySelector(".rule-fallback-tip");
+    const westTip = node.querySelector(".rule-western-tip");
 
     node.classList.toggle("is-other", kind === "other");
     node.classList.toggle("is-fallback", kind === "fallback");
+    node.classList.toggle("is-western", kind === "western");
 
     if (kind === "western") {
       kwLabel.textContent = "厂牌列表（逗号分隔，不分大小写）";
@@ -185,6 +187,78 @@
     }
 
     if (tip) tip.style.display = kind === "fallback" ? "" : "none";
+    if (westTip) westTip.style.display = kind === "western" ? "" : "none";
+
+    // 欧美规则与兜底规则不提供标记功能
+    const markRow = node.querySelector(".rule-mark-row");
+    if (markRow) markRow.style.display = (kind === "western" || kind === "fallback") ? "none" : "";
+
+    // 标记位置文案随类型变化
+    const posSel = node.querySelector(".rule-mark-pos");
+    if (posSel) {
+      const isOther = kind === "other";
+      posSel.options[0].textContent = isOther ? "文件名后（xxx_restored）" : "番号后（DASS-787-U）";
+      posSel.options[1].textContent = isOther ? "文件名前（U-xxx）" : "番号前（U-DASS-787）";
+    }
+  }
+
+  /** 折叠态下的一行摘要 */
+  function updateRuleSummary(node) {
+    const kind = node.querySelector(".rule-kind").value;
+    const name = node.querySelector(".rule-name").value.trim() || "未命名规则";
+    const kws = (node.querySelector(".rule-keywords").value || "")
+      .split(/[,，\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const action = node.querySelector(".rule-action").value;
+    const enabled = node.querySelector(".rule-enabled-cb").checked;
+    const target = node.querySelector(".rule-target").value.trim();
+    const mark = node.querySelector(".rule-mark").value.trim();
+    const pos = node.querySelector(".rule-mark-pos").value;
+
+    const KIND_BADGE = {
+      jav: ["JAV", "badge-jav"],
+      western: ["欧美", "badge-western"],
+      other: ["普通", "badge-other"],
+      fallback: ["兜底", "badge-fallback"],
+    };
+    const [badgeText, badgeCls] = KIND_BADGE[kind] || KIND_BADGE.jav;
+    const badgeEl = node.querySelector(".rule-kind-badge");
+    badgeEl.textContent = badgeText;
+    badgeEl.className = "rule-kind-badge " + badgeCls;
+
+    node.querySelector(".rule-name-text").textContent = name;
+    node.querySelector(".rule-name-text").title = name;
+
+    const kwEl = node.querySelector(".rule-kw-preview");
+    if (kind === "fallback") {
+      kwEl.textContent = "所有未命中的视频";
+      kwEl.title = "";
+    } else if (kws.length) {
+      kwEl.textContent = kws.length > 3
+        ? kws.slice(0, 3).join(", ") + ` +${kws.length - 3}`
+        : kws.join(", ");
+      kwEl.title = kws.join(", ");
+    } else {
+      kwEl.textContent = "（未填关键字）";
+      kwEl.title = "";
+    }
+
+    // 处理流程：关键字 → [标记] → 目录
+    const parts = [];
+    if (mark && kind !== "western" && kind !== "fallback") {
+      parts.push(pos === "before" ? `${mark.trim()||"-"}…前` : `…${mark}`);
+    }
+    parts.push(action === "copy" ? "复制" : "移动");
+    parts.push(target ? target.split(/[\\/]/).filter(Boolean).pop() : "未设目录");
+    const flowEl = node.querySelector(".rule-flow");
+    flowEl.textContent = "→ " + parts.join(" → ");
+    flowEl.title = target || "";
+
+    const stateEl = node.querySelector(".rule-state");
+    stateEl.textContent = enabled ? "启用" : "已停用";
+    stateEl.className = "rule-state" + (enabled ? " on" : " off");
+    node.classList.toggle("is-disabled", !enabled);
   }
 
   /** 刷新每条规则的序号显示 */
@@ -234,24 +308,61 @@
       node.querySelector(".rule-enabled-cb").checked = rule.enabled !== false;
       node.querySelector(".rule-keywords").value = (rule.keywords || []).join(", ");
       node.querySelector(".rule-mark").value = rule.mark || "";
+      node.querySelector(".rule-mark-pos").value = rule.mark_position || "after";
       node.querySelector(".rule-target").value = rule.target_dir || "";
 
       // 关键字过多时自动换行撑高（替代单行 input）
       const kwEl = node.querySelector(".rule-keywords");
-      kwEl.addEventListener("input", () => autoGrow(kwEl));
+      kwEl.addEventListener("input", () => {
+        autoGrow(kwEl);
+        updateRuleSummary(node);
+      });
 
-      if (rule.enabled === false) node.classList.add("is-disabled");
       applyRuleKind(node);
+      updateRuleSummary(node);
+
+      // 折叠/展开：默认折叠，保持列表紧凑
+      if (rule._expanded) node.classList.add("is-expanded");
+      const toggleExpand = () => {
+        const expanded = node.classList.toggle("is-expanded");
+        rule._expanded = expanded;
+        if (expanded) {
+          requestAnimationFrame(() => autoGrow(node.querySelector(".rule-keywords")));
+        }
+      };
+      node.querySelector(".rule-toggle").addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleExpand();
+      });
+      // 点击摘要行空白处也能展开（但不干扰按钮与拖动把手）
+      node.querySelector(".rule-summary").addEventListener("click", (e) => {
+        if (e.target.closest(".rule-grip, .rule-move, .rule-del, .rule-toggle")) return;
+        toggleExpand();
+      });
+
+      // 任意编辑动作都实时刷新摘要
+      const refresh = () => updateRuleSummary(node);
+      node.querySelector(".rule-name").addEventListener("input", refresh);
+      node.querySelector(".rule-target").addEventListener("input", refresh);
+      node.querySelector(".rule-mark").addEventListener("input", refresh);
+      node.querySelector(".rule-mark-pos").addEventListener("change", refresh);
+      node.querySelector(".rule-action").addEventListener("change", refresh);
 
       node.querySelector(".rule-kind").addEventListener("change", () => {
         applyRuleKind(node);
+        updateRuleSummary(node);
         deliverMsg("规则类型已修改，记得保存", "busy");
       });
       node.querySelector(".rule-enabled-cb").addEventListener("change", (e) => {
         node.classList.toggle("is-disabled", !e.target.checked);
+        updateRuleSummary(node);
       });
       node.querySelector(".rule-del").addEventListener("click", async () => {
-        const ok = await confirmDialog("删除规则", `确定删除规则「${rule.name || "未命名"}」吗？`, "删除");
+        const ok = await confirmDialog(
+          "删除规则",
+          `确定删除规则「${node.querySelector(".rule-name").value.trim() || "未命名"}」吗？`,
+          "删除"
+        );
         if (!ok) return;
         node.remove();
         if (!$("rule-list").children.length) {
@@ -380,7 +491,10 @@
         enabled: node.querySelector(".rule-enabled-cb").checked,
         keywords,
         mark: node.querySelector(".rule-mark").value.trim(),
+        mark_position: node.querySelector(".rule-mark-pos").value,
         target_dir: node.querySelector(".rule-target").value.trim(),
+        // 仅前端使用：重渲染时保留展开状态
+        _expanded: node.classList.contains("is-expanded"),
       });
     });
     return out;
@@ -1013,7 +1127,9 @@
         enabled: true,
         keywords: [],
         mark: "-U",
+        mark_position: "after",
         target_dir: "",
+        _expanded: true, // 新增规则默认展开，方便立即填写
       });
       renderRules(rules);
       promiseScrollToLastRule();
