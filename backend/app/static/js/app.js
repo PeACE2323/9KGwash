@@ -12,6 +12,7 @@
     overview: { title: "运行概览", desc: "当前网关状态与运行模式" },
     hound: { title: "空间猎犬", desc: "排查并清理本地无 STRM 的空壳目录" },
     dedup: { title: "影片查重", desc: "全库番号比对与一键洗板清理" },
+    deliver: { title: "文件投递", desc: "关键字改名 + 按规则投递到指定目录" },
     config: { title: "运行配置", desc: "Webhook、运行模式与路径查看" },
     logs: { title: "活动日志", desc: "洗板全过程实时输出" },
   };
@@ -23,7 +24,8 @@
     emptyFolders: [],
     duplicates: [],
     busy: false,
-    loaded: { overview: false, hound: false, dedup: false },
+    loaded: { overview: false, hound: false, dedup: false, deliver: false },
+    deliver: null, // 当前投递配置
   };
 
   /* ----------------------------- 通用 ----------------------------- */
@@ -147,6 +149,303 @@
     // 首次进入某视图时按需加载
     if (name === "overview") loadStatus();
     if (name === "logs") fetchLogs();
+    if (name === "deliver") loadDeliverConfig();
+  }
+
+  /* ----------------------------- 文件投递 ----------------------------- */
+  function deliverMsg(text, cls) {
+    const el = $("deliver-msg");
+    el.textContent = text || "";
+    el.className = "status-msg" + (cls ? " " + cls : "");
+  }
+
+  function renderRules(rules) {
+    const list = $("rule-list");
+    const tpl = $("rule-tpl");
+    list.innerHTML = "";
+
+    if (!rules || !rules.length) {
+      list.innerHTML = '<div class="empty-hint">还没有规则，点击右上角「添加规则」</div>';
+      return;
+    }
+
+    rules.forEach((rule, idx) => {
+      const node = tpl.content.firstElementChild.cloneNode(true);
+      node.dataset.idx = String(idx);
+      node.dataset.id = rule.id || "";
+
+      node.querySelector(".rule-name").value = rule.name || "";
+      node.querySelector(".rule-kind").value = rule.kind || "jav";
+      node.querySelector(".rule-action").value = rule.action || "move";
+      node.querySelector(".rule-enabled-cb").checked = rule.enabled !== false;
+      node.querySelector(".rule-keywords").value = (rule.keywords || []).join(", ");
+      node.querySelector(".rule-mark").value = rule.mark || "";
+      node.querySelector(".rule-target").value = rule.target_dir || "";
+
+      if ((rule.kind || "jav") === "other") node.classList.add("is-other");
+      if (rule.enabled === false) node.classList.add("is-disabled");
+
+      // 类型切换：普通规则隐藏「标记」字段
+      node.querySelector(".rule-kind").addEventListener("change", (e) => {
+        node.classList.toggle("is-other", e.target.value === "other");
+      });
+      node.querySelector(".rule-enabled-cb").addEventListener("change", (e) => {
+        node.classList.toggle("is-disabled", !e.target.checked);
+      });
+      node.querySelector(".rule-del").addEventListener("click", async () => {
+        const ok = await confirmDialog("删除规则", `确定删除规则「${rule.name || "未命名"}」吗？`, "删除");
+        if (!ok) return;
+        node.remove();
+        if (!$("rule-list").children.length) {
+          $("rule-list").innerHTML = '<div class="empty-hint">还没有规则，点击右上角「添加规则」</div>';
+        }
+        deliverMsg("已移除规则，记得保存", "busy");
+      });
+      node.querySelector(".rule-browse").addEventListener("click", () => {
+        browserTargetId = node.querySelector(".rule-target");
+        $("browser").hidden = false;
+        loadBrowser(node.querySelector(".rule-target").value || "/");
+      });
+
+      list.appendChild(node);
+    });
+  }
+
+  function collectRules() {
+    const out = [];
+    document.querySelectorAll("#rule-list .rule-item").forEach((node) => {
+      const keywordsRaw = node.querySelector(".rule-keywords").value || "";
+      const keywords = keywordsRaw
+        .replace(/，/g, ",")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      out.push({
+        id: node.dataset.id || "",
+        name: node.querySelector(".rule-name").value.trim(),
+        kind: node.querySelector(".rule-kind").value,
+        action: node.querySelector(".rule-action").value,
+        enabled: node.querySelector(".rule-enabled-cb").checked,
+        keywords,
+        mark: node.querySelector(".rule-mark").value.trim(),
+        target_dir: node.querySelector(".rule-target").value.trim(),
+      });
+    });
+    return out;
+  }
+
+  function collectDeliverConfig() {
+    return {
+      ENABLED: $("deliver-enabled").checked,
+      SCAN_DIR: $("deliver-scan-dir").value.trim(),
+      MIN_SIZE_MB: parseInt($("deliver-min-size").value, 10) || 0,
+      WATCH_INTERVAL: parseInt($("deliver-interval").value, 10) || 60,
+      SETTLE_SECONDS: parseInt($("deliver-settle").value, 10) || 0,
+      RECURSIVE: $("deliver-recursive").checked,
+      REMOVE_EMPTY_DIRS: $("deliver-remove-empty").checked,
+      OVERWRITE: $("deliver-overwrite").checked,
+      RULES: collectRules(),
+    };
+  }
+
+  async function loadDeliverConfig() {
+    try {
+      const data = await api("/api/deliver/config");
+      if (!data.success) {
+        deliverMsg("配置读取失败", "err");
+        return;
+      }
+      const cfg = data.config || {};
+      state.deliver = cfg;
+
+      $("deliver-enabled").checked = !!cfg.ENABLED;
+      $("deliver-scan-dir").value = cfg.SCAN_DIR || "";
+      $("deliver-min-size").value = cfg.MIN_SIZE_MB != null ? cfg.MIN_SIZE_MB : 100;
+      $("deliver-interval").value = cfg.WATCH_INTERVAL || 60;
+      $("deliver-settle").value = cfg.SETTLE_SECONDS != null ? cfg.SETTLE_SECONDS : 10;
+      $("deliver-recursive").checked = cfg.RECURSIVE !== false;
+      $("deliver-remove-empty").checked = cfg.REMOVE_EMPTY_DIRS !== false;
+      $("deliver-overwrite").checked = cfg.OVERWRITE !== false;
+
+      renderRules(cfg.RULES || []);
+      updateDeliverStatus(data.watcher);
+      state.loaded.deliver = true;
+    } catch (e) {
+      deliverMsg("配置读取异常", "err");
+    }
+  }
+
+  function updateDeliverStatus(watcher) {
+    const dot = $("nav-deliver-dot");
+    if (dot) dot.style.display = watcher && watcher.enabled ? "" : "none";
+
+    const el = $("deliver-status-text");
+    if (!el) return;
+    if (!watcher) {
+      el.textContent = "";
+      return;
+    }
+    if (!watcher.enabled) {
+      el.textContent = "后台监控：已关闭";
+      return;
+    }
+    const last = watcher.last_run ? new Date(watcher.last_run * 1000).toLocaleString() : "尚未执行";
+    el.textContent = `后台监控：运行中（每 ${watcher.interval}s）· 上次执行：${last}`;
+  }
+
+  async function saveDeliverConfig(showToast) {
+    deliverMsg("正在保存...", "busy");
+    try {
+      const res = await api("/api/deliver/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(collectDeliverConfig()),
+      });
+      if (res.success) {
+        deliverMsg("✅ 已保存并生效", "ok");
+        state.deliver = res.config;
+        updateDeliverStatus((await api("/api/deliver/status")).watcher);
+        if (showToast) toast("投递配置已保存");
+        return true;
+      }
+      deliverMsg("❌ 保存失败", "err");
+      return false;
+    } catch (e) {
+      deliverMsg("❌ 网络异常", "err");
+      return false;
+    }
+  }
+
+  function renderDeliverResult(stats) {
+    const card = $("deliver-result-card");
+    const box = $("deliver-result");
+    card.hidden = false;
+
+    const summary =
+      `<div class="deliver-row"><span class="tag-k tag-moved">汇总</span>` +
+      `<span class="fname">扫描 ${stats.scanned} · 删除 ${stats.deleted} · 移动 ${stats.moved} · ` +
+      `复制 ${stats.copied} · 跳过 ${stats.skipped} · 失败 ${stats.failed} · 清理空目录 ${stats.removed_dirs}` +
+      (stats.dry_run ? " · 【Dry Run 预览】" : "") +
+      `</span></div>`;
+
+    const tagMap = {
+      moved: ["tag-moved", "移动"],
+      copied: ["tag-copied", "复制"],
+      deleted: ["tag-deleted", "删除"],
+      "dry-run": ["tag-copied", "预览"],
+      failed: ["tag-failed", "失败"],
+      skipped: ["tag-skipped", "跳过"],
+    };
+
+    const rows = (stats.details || [])
+      .map((d) => {
+        const [cls, label] = tagMap[d.action] || ["tag-skipped", d.action];
+        const name = d.new_name || d.file;
+        const sub = d.target ? ` → ${d.target}` : d.reason ? ` · ${d.reason}` : "";
+        return (
+          `<div class="deliver-row"><span class="tag-k ${cls}">${label}</span>` +
+          `<span class="fname" title="${escapeHtml(d.file)}">${escapeHtml(name)}</span>` +
+          `<span class="reason" title="${escapeHtml(sub)}">${escapeHtml(sub.slice(0, 70))}</span></div>`
+        );
+      })
+      .join("");
+
+    box.innerHTML = summary + (rows || '<div class="deliver-row"><span class="fname">没有产生任何变更</span></div>');
+  }
+
+  async function runDeliver(dryRun) {
+    const cfg = collectDeliverConfig();
+    if (!cfg.SCAN_DIR) {
+      toast("请先填写监控目录");
+      return;
+    }
+
+    if (!dryRun) {
+      const ok = await confirmDialog(
+        "确认执行投递",
+        `即将扫描并处理监控目录：\n${cfg.SCAN_DIR}\n\n` +
+          `· 低于 ${cfg.MIN_SIZE_MB}MB 的文件会被删除\n` +
+          `· 命中关键字的媒体文件会被改名并移动到目标目录\n\n确定执行吗？`,
+        "🚀 确认执行"
+      );
+      if (!ok) return;
+    }
+
+    const btn = dryRun ? $("deliver-preview-btn") : $("deliver-run-btn");
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "⏳ 处理中...";
+    deliverMsg(dryRun ? "正在预览..." : "正在执行...", "busy");
+
+    try {
+      const stats = await api("/api/deliver/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: dryRun }),
+      });
+      renderDeliverResult(stats);
+      if (stats.success) {
+        deliverMsg(dryRun ? "✅ 预览完成" : "✅ 执行完成", "ok");
+        toast(
+          dryRun
+            ? `预览完成：将处理 ${(stats.details || []).length} 项`
+            : `完成：删除 ${stats.deleted}，移动 ${stats.moved}，复制 ${stats.copied}`
+        );
+      } else {
+        deliverMsg("❌ " + (stats.error || "执行失败"), "err");
+        toast(stats.error || "执行失败");
+      }
+    } catch (e) {
+      deliverMsg("❌ 请求异常", "err");
+      toast("请求异常，请查看日志");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  /* ----------------------------- 目录选择器 ----------------------------- */
+  let browserTargetId = null;
+  let browserCurrent = "/";
+
+  async function loadBrowser(path) {
+    const list = $("browser-list");
+    list.innerHTML = '<div class="empty-hint">加载中...</div>';
+    try {
+      const data = await api("/api/deliver/browse?path=" + encodeURIComponent(path));
+      if (!data.success) {
+        list.innerHTML = `<div class="empty-hint">${escapeHtml(data.error || "无法读取")}</div>`;
+        return;
+      }
+      browserCurrent = data.path;
+      $("browser-path").textContent = data.path;
+
+      const parts = [];
+      if (data.parent) {
+        parts.push('<div class="browser-entry up" data-path="' + escapeHtml(data.parent) + '">⬆️ 上一级</div>');
+      }
+      (data.dirs || []).forEach((d) => {
+        parts.push(
+          '<div class="browser-entry" data-path="' + escapeHtml(d.path) + '">📁 ' + escapeHtml(d.name) + "</div>"
+        );
+      });
+      if (!data.dirs || !data.dirs.length) {
+        parts.push('<div class="empty-hint">此目录下没有子目录</div>');
+      }
+      list.innerHTML = parts.join("");
+
+      list.querySelectorAll(".browser-entry[data-path]").forEach((el) => {
+        el.addEventListener("click", () => loadBrowser(el.dataset.path));
+      });
+    } catch (e) {
+      list.innerHTML = '<div class="empty-hint">读取失败</div>';
+    }
+  }
+
+  function openBrowser(initial) {
+    browserTargetId = $("deliver-scan-dir");
+    $("browser").hidden = false;
+    loadBrowser(initial || "/");
   }
 
   /* ----------------------------- 概览 ----------------------------- */
@@ -551,6 +850,44 @@
       state.lastLogText = "\u0000-cleared";
     });
 
+    /* ---------- 文件投递 ---------- */
+    $("deliver-save-btn").addEventListener("click", () => saveDeliverConfig(true));
+    $("deliver-preview-btn").addEventListener("click", () => runDeliver(true));
+    $("deliver-run-btn").addEventListener("click", () => runDeliver(false));
+
+    $("deliver-add-rule").addEventListener("click", () => {
+      const rules = collectRules();
+      rules.push({
+        id: "",
+        name: "新规则",
+        kind: "jav",
+        action: "move",
+        enabled: true,
+        keywords: [],
+        mark: "-U",
+        target_dir: "",
+      });
+      renderRules(rules);
+      deliverMsg("已新增规则，记得保存", "busy");
+    });
+
+    // 监控目录的浏览按钮
+    document.querySelectorAll('[data-browse="deliver-scan-dir"]').forEach((btn) => {
+      btn.addEventListener("click", () => {
+        browserTargetId = $("deliver-scan-dir");
+        $("browser").hidden = false;
+        loadBrowser($("deliver-scan-dir").value || "/");
+      });
+    });
+
+    $("browser-cancel").addEventListener("click", () => {
+      $("browser").hidden = true;
+    });
+    $("browser-ok").addEventListener("click", () => {
+      if (browserTargetId) browserTargetId.value = browserCurrent;
+      $("browser").hidden = true;
+    });
+
     // 委托：点击带 data-copy 的元素即复制
     document.addEventListener("click", (e) => {
       const el = e.target.closest("[data-copy]");
@@ -561,8 +898,13 @@
 
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
-        if (!$("modal").hidden) $("modal-cancel").click();
-        else closeDrawer();
+        if (!$("browser").hidden) {
+          $("browser").hidden = true;
+        } else if (!$("modal").hidden) {
+          $("modal-cancel").click();
+        } else {
+          closeDrawer();
+        }
       }
     });
 

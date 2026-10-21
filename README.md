@@ -116,13 +116,16 @@ docker compose up -d --build
     ├── config.default.json         # 首次启动写入的默认配置
     ├── tools/env_override.py       # 环境变量覆盖结构性路径
     ├── tests/
-    │   ├── test_e2e.py             # 113 项端到端回归
+    │   ├── test_e2e.py             # 洗板核心 116 项端到端回归
+    │   ├── test_deliver.py         # 文件投递 62 项测试
     │   └── compare_original.py     # 与原脚本逐场景对照
     └── app/
-        ├── factory.py              # 应用工厂 / 启动横幅
+        ├── factory.py              # 应用工厂 / 启动横幅 / 拉起投递监控
         ├── config.py               # 配置加载、保存、运行期热更新
         ├── logging_setup.py        # 按天滚动日志
-        ├── routers/main.py         # 全部路由
+        ├── routers/
+        │   ├── main.py             # 洗板相关路由
+        │   └── deliver_api.py      # 文件投递路由
         ├── services/
         │   ├── fanhao.py           # 番号解析 / 权重 / 版本聚类（纯函数）
         │   ├── washer.py           # 核心洗板对决
@@ -130,15 +133,20 @@ docker compose up -d --build
         │   ├── webhooks.py         # CD2 通关 + Emby 中转
         │   ├── fs.py               # 安全删除 / 路径推导 / 关联清理
         │   ├── history.py          # 洗板档案
-        │   └── cms.py              # CMS 唤醒
+        │   ├── cms.py              # CMS 唤醒
+        │   ├── naming.py           # 番号智能定位 + 标记插入（纯函数）
+        │   ├── deliver.py          # 投递引擎（扫描/删除/改名/投递/清空目录）
+        │   └── deliver_store.py    # 投递配置持久化 + 后台监控线程
         ├── templates/index.html
         └── static/{css,js}/
 ```
 
 **扩展一个功能**的推荐姿势：
-- 新的目录/文件规则 → 加在 `services/fanhao.py`（纯函数，易测）
+- 新的目录/文件规则 → 加在 `services/fanhao.py` 或 `services/naming.py`（纯函数，易测）
 - 新的清理流程 → 组合 `services/fs.py` 的安全原语，别自己写 `rmtree`
-- 新的 HTTP 接口 → 在 `routers/main.py` 加 `@bp.route`，前端在 `static/js/app.js` 调 `api()`
+- 新的投递规则类型 → 在 `services/deliver.py::process_one_file` 增加分支
+- 新的 HTTP 接口 → 在 `routers/` 下加 `@bp.route`，前端在 `static/js/app.js` 调 `api()`
+- 新的页面 → 在 `index.html` 加一个 `<section class="view" id="view-xxx">`，并在 `VIEW_META` 与导航里登记
 
 ---
 
@@ -147,16 +155,73 @@ docker compose up -d --build
 ```bash
 # 需要 Python 3.12 + flask + requests
 cd backend
-python -m tests.test_e2e        # 113 项断言
+python -m tests.test_e2e        # 洗板核心 116 项断言
+python -m tests.test_deliver    # 文件投递 62 项断言
 python tests/compare_original.py  # 需要原 xiban_server.py（XIBAN_ORIG_SRC 可指定路径）
 ```
 
 覆盖：番号解析、权重、洗板三策略、Dry Run、猎犬、安全锁、查重扫描与洗板、
-CD2 通关、Emby 五种判定分支、去前缀转发、配置热更新、日志接口、静态资源。
+CD2 通关、Emby 五种判定分支、去前缀转发、配置热更新、日志接口、静态资源；
+以及番号智能定位、标记插入、关键字匹配、体积阈值、移动/复制/覆盖、空目录清理、投递 API。
 
 ---
 
-## 6. 常见问题
+## 6. 文件投递（关键字改名 + 定向分发）
+
+用于处理 115 离线下载到「重命名文件夹」的原始文件：**自动清理小文件、按关键字给番号打标、分发到指定目录**。
+
+### 6.1 工作流程
+
+```
+监控目录 ──扫描──> ① 小于「最小体积」的文件 ──> 直接删除（含非媒体文件）
+                        │
+                        └─ ② 媒体文件命中关键字 ──> 番号后插入标记 ──> 投递到目标目录
+                                                    │
+                                                    └─ 文件名无番号则跳过（不误投）
+               ③ 处理完毕 ──> 清理空文件夹
+```
+
+### 6.2 命名示例
+
+| 原始文件名 | 关键字 | 标记 | 结果 |
+| --- | --- | --- | --- |
+| `www.98T.la@DASS-787無防備に…_restored_wm.mp4` | `restored` | `-U` | `www.98T.la@DASS-787-U無防備に…_restored_wm.mp4` |
+
+- 自动跳过 `www.98T.la@`、`[ThZu.Cc]`、`hhd800.com@` 等发布站前缀，不会把 `98T` 误判成番号
+- 支持前置数字厂牌：`259LUXU-1900` → `259LUXU-1900-U`
+- 关键字**不分大小写**
+- 幂等：已带 `-U` 的文件不会重复添加
+
+### 6.3 规则类型
+
+| 类型 | 行为 |
+| --- | --- |
+| **JAV 番号规则** | 命中关键字 → 番号后加标记 → 投递到目标目录；**文件名无番号则跳过** |
+| **普通关键字规则** | 命中关键字 → 原样投递到目标目录，不改名、不要求含番号 |
+
+每条规则可独立设置：关键字（多个）、标记、目标目录、**移动 / 复制**、启用开关。
+
+### 6.4 配置项
+
+| 键 | 说明 |
+| --- | --- |
+| `SCAN_DIR` | 监控目录（容器内路径） |
+| `MIN_SIZE_MB` | 最小体积，低于此值直接删除 |
+| `WATCH_INTERVAL` | 后台轮询间隔（秒） |
+| `SETTLE_SECONDS` | 落盘稳定期，文件静置够久才处理（防拷到一半） |
+| `RECURSIVE` | 是否递归子目录 |
+| `REMOVE_EMPTY_DIRS` | 处理后清理空文件夹 |
+| `OVERWRITE` | 目标同名文件是否覆盖（关闭则自动加 `_1`） |
+| `RULES` | 规则数组 |
+
+配置独立存于 `/config/deliver.json`，与洗板的 `config.json` 互不影响。
+
+> ⚠️ 投递功能同样受 **DRY_RUN** 保护：Dry Run 下只记日志、不动文件。
+> 建议先点「预览（Dry Run）」确认改名与目标路径无误，再实弹执行。
+
+---
+
+## 7. 常见问题
 
 **Q：容器里 `/media/CloudDrive` 是空的？**
 检查宿主机路径是否挂对，且 `config.json` 的 `MOUNT_BASE_PATH` 与之匹配；`/api/status` 会返回 `mount_ok` / `meta_ok`。
@@ -166,3 +231,6 @@ CD2 通关、Emby 五种判定分支、去前缀转发、配置热更新、日�
 
 **Q：想看是否真删了？**
 保持 `DRY_RUN=true` 先跑一轮：日志里会出现 `[Dry Run] 准备删除 ...`，不会动文件。
+
+**Q：文件投递看不到效果？**
+① 确认监控目录已正确挂载进容器；② 后台监控需勾选「启用后台自动监控」并保存；③ 也可以直接点「立即执行投递」；④ 检查最小体积阈值是否设得过高。

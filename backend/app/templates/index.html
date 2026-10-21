@@ -34,6 +34,10 @@
         <button class="nav-item" data-view="dedup">
           <span class="nav-icon">🔍</span><span class="nav-label">影片查重</span>
         </button>
+        <button class="nav-item" data-view="deliver">
+          <span class="nav-icon">📦</span><span class="nav-label">文件投递</span>
+          <span class="nav-dot" id="nav-deliver-dot" title="监控已启用" style="display:none"></span>
+        </button>
 
         <span class="nav-group">系统</span>
         <button class="nav-item" data-view="config">
@@ -152,6 +156,94 @@
           </div>
         </section>
 
+        <!-- ---------- 视图：文件投递 ---------- -->
+        <section class="view" id="view-deliver">
+          <!-- 基础设置 -->
+          <div class="card">
+            <div class="card-head">
+              <h2>📦 投递基础设置</h2>
+              <div class="head-tools">
+                <span class="status-msg" id="deliver-msg"></span>
+                <button class="btn btn-primary btn-sm" id="deliver-save-btn">💾 保存设置</button>
+              </div>
+            </div>
+            <p class="view-tip">
+              扫描监控目录 → 低于最小体积的文件直接删除 → 命中关键字的媒体文件按规则改名并投递到目标目录 → 清理空文件夹。
+              所有关键字<strong>不分大小写</strong>。
+            </p>
+
+            <div class="form-grid">
+              <label class="field">
+                <span>监控目录（容器内路径）</span>
+                <div class="input-with-btn">
+                  <input type="text" id="deliver-scan-dir" placeholder="/deliver/inbox">
+                  <button type="button" class="btn btn-ghost btn-sm" data-browse="deliver-scan-dir">浏览</button>
+                </div>
+              </label>
+              <label class="field">
+                <span>最小体积 (MB) — 低于此值直接删除</span>
+                <input type="text" id="deliver-min-size" placeholder="100">
+              </label>
+              <label class="field">
+                <span>监控轮询间隔（秒）</span>
+                <input type="text" id="deliver-interval" placeholder="60">
+              </label>
+              <label class="field">
+                <span>落盘稳定期（秒）— 文件修改后需静置多久才处理</span>
+                <input type="text" id="deliver-settle" placeholder="10">
+              </label>
+            </div>
+
+            <div class="switch-row">
+              <label class="switch-item">
+                <input type="checkbox" id="deliver-enabled">
+                <span>启用后台自动监控</span>
+              </label>
+              <label class="switch-item">
+                <input type="checkbox" id="deliver-recursive">
+                <span>递归扫描子目录</span>
+              </label>
+              <label class="switch-item">
+                <input type="checkbox" id="deliver-remove-empty">
+                <span>处理后清理空目录</span>
+              </label>
+              <label class="switch-item">
+                <input type="checkbox" id="deliver-overwrite">
+                <span>目标同名文件覆盖</span>
+              </label>
+            </div>
+
+            <div class="action-row" style="margin-top:14px">
+              <button class="btn btn-ghost" id="deliver-preview-btn">👁️ 预览（Dry Run）</button>
+              <button class="btn btn-danger" id="deliver-run-btn">🚀 立即执行投递</button>
+              <span class="hint-inline" id="deliver-status-text"></span>
+            </div>
+          </div>
+
+          <!-- 规则列表 -->
+          <div class="card">
+            <div class="card-head">
+              <h2>🏷️ 关键字投递规则</h2>
+              <div class="head-tools">
+                <button class="btn btn-ghost btn-sm" id="deliver-add-rule">➕ 添加规则</button>
+              </div>
+            </div>
+            <p class="view-tip">
+              <strong>JAV 规则</strong>：命中关键字后，在番号后插入标记并投递到目标目录（如 <code>DASS-787</code> → <code>DASS-787-U</code>）。<br>
+              <strong>普通规则</strong>：命中关键字后原样投递到目标目录，不改名、不要求含番号。
+            </p>
+            <div id="rule-list" class="rule-list">
+              <div class="empty-hint">还没有规则，点击右上角「添加规则」</div>
+            </div>
+          </div>
+
+          <!-- 执行结果 -->
+          <div class="card" id="deliver-result-card" hidden>
+            <div class="card-head"><h2>📋 最近一次执行结果</h2></div>
+            <div class="result-box" id="deliver-result" style="max-height:40vh"></div>
+          </div>
+        </section>
+
         <!-- ---------- 视图：运行配置 ---------- -->
         <section class="view" id="view-config">
           <div class="card">
@@ -227,6 +319,55 @@
       </div>
     </div>
   </div>
+
+  <!-- 目录选择器 -->
+  <div id="browser" class="modal" hidden>
+    <div class="modal-card browser-card">
+      <h3>选择目录</h3>
+      <div class="browser-path" id="browser-path">/</div>
+      <div class="browser-list" id="browser-list"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="browser-cancel">取消</button>
+        <button class="btn btn-primary" id="browser-ok">选择当前目录</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 规则卡片模板 -->
+  <template id="rule-tpl">
+    <div class="rule-item">
+      <div class="rule-head">
+        <input type="text" class="rule-name" placeholder="规则名称">
+        <select class="rule-kind">
+          <option value="jav">JAV 番号规则</option>
+          <option value="other">普通关键字规则</option>
+        </select>
+        <select class="rule-action">
+          <option value="move">移动</option>
+          <option value="copy">复制</option>
+        </select>
+        <label class="rule-enabled"><input type="checkbox" class="rule-enabled-cb"> 启用</label>
+        <button type="button" class="btn btn-ghost btn-xs rule-del">删除</button>
+      </div>
+      <div class="rule-body">
+        <label class="field">
+          <span>关键字（逗号分隔，不分大小写）</span>
+          <input type="text" class="rule-keywords" placeholder="restored, uncensored">
+        </label>
+        <label class="field rule-mark-field">
+          <span>番号后标记（如 -U）</span>
+          <input type="text" class="rule-mark" placeholder="-U">
+        </label>
+        <label class="field rule-target-field">
+          <span>目标目录（容器内路径）</span>
+          <div class="input-with-btn">
+            <input type="text" class="rule-target" placeholder="/media/115open/9KG/交付/还原">
+            <button type="button" class="btn btn-ghost btn-sm rule-browse">浏览</button>
+          </div>
+        </label>
+      </div>
+    </div>
+  </template>
 
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

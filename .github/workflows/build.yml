@@ -30,6 +30,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_e2e
 
+      - name: 运行文件投递功能测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_deliver
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

@@ -1,0 +1,316 @@
+"""文件投递功能的端到端测试（不依赖 pytest）。
+
+覆盖：
+  A. 番号智能定位（跳过 www.98T.la@ 等前缀、前置数字厂牌、误判防护）
+  B. 标记插入（用户原始例子、幂等、已有标记不重复）
+  C. 关键字匹配（不分大小写、多关键字映射同一标记）
+  D. 投递引擎：体积阈值删除、JAV 投递、普通规则投递、移动/复制、覆盖、空目录清理
+  E. API：配置读写、目录浏览、预览、立即执行
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import os
+import shutil
+import sys
+import time
+
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(BASE, "backend"))
+
+TMP = os.path.join(BASE, "tests", "_tmp_deliver")
+if os.path.isdir(TMP):
+    shutil.rmtree(TMP, ignore_errors=True)
+os.makedirs(TMP, exist_ok=True)
+
+CONFIG_DIR = os.path.join(TMP, "config")
+SCAN = os.path.join(TMP, "inbox")
+OUT_JAV = os.path.join(TMP, "out", "jav")
+OUT_UNCENSORED = os.path.join(TMP, "out", "uncensored")
+OUT_OTHER = os.path.join(TMP, "out", "other")
+for d in (CONFIG_DIR, SCAN, OUT_JAV, OUT_UNCENSORED, OUT_OTHER):
+    os.makedirs(d, exist_ok=True)
+
+os.environ["XIBAN_CONFIG_DIR"] = CONFIG_DIR
+os.environ["XIBAN_PRINT_BANNER"] = "0"
+os.environ["XIBAN_DISABLE_WATCHER"] = "1"
+os.environ["XIBAN_BROWSE_ROOTS"] = TMP
+
+with open(os.path.join(CONFIG_DIR, "config.json"), "w", encoding="utf-8") as f:
+    json.dump(
+        {
+            "MOUNT_BASE_PATH": os.path.join(TMP, "media").replace("\\", "/"),
+            "METADATA_BASE_PATH": os.path.join(TMP, "metadata").replace("\\", "/"),
+            "WATCHED_DIRS": ["/115open/9KG/STRM"],
+            "DRY_RUN": False,
+            "DB_ONLINE_WEBHOOK": "",
+            "STRM_WEBHOOK": "",
+            "IGNORE_LEADING_DIGITS": True,
+        },
+        f,
+        ensure_ascii=False,
+    )
+
+from app.factory import create_app  # noqa: E402
+from app.services import deliver, naming  # noqa: E402
+
+app = create_app()
+client = app.test_client()
+
+PASS = 0
+FAIL = 0
+
+
+def check(name, cond, extra=""):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+        print(f"  ✅ {name}")
+    else:
+        FAIL += 1
+        print(f"  ❌ {name} {extra}")
+
+
+def clean(*dirs):
+    for d in dirs:
+        if os.path.isdir(d):
+            for name in os.listdir(d):
+                p = os.path.join(d, name)
+                if os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    os.remove(p)
+
+
+def touch(path, size_bytes=1024):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"0" * size_bytes)
+    return path
+
+
+MB = 1024 * 1024
+
+# ===========================================================================
+print("\n=== A. 番号智能定位 ===")
+USER_FILE = (
+    "www.98T.la@DASS-787無防備に黒パンストを見せつける姉ちゃんのデカ尻を揉み倒して"
+    "中出ししてしまった僕。橘メアリー_restored_wm.mp4"
+)
+
+info = naming.find_fanhao(USER_FILE)
+check("用户例子识别出 DASS-787", info and info["fanhao"].upper() == "DASS-787", info)
+check("跳过 www.98T.la@ 前缀", info and info["prefix"].lower() == "www.98t.la@", info["prefix"] if info else None)
+check("未误判 98T", info and "98T" not in info["fanhao"].upper())
+
+check("普通番号 DASS-787", (naming.find_fanhao("DASS-787.mp4") or {}).get("fanhao", "").upper() == "DASS-787")
+check("[ThZu.Cc] 前缀", (naming.find_fanhao("[ThZu.Cc]ABP-159-C.mp4") or {}).get("fanhao", "").upper() == "ABP-159")
+check("hhd800.com@ 前缀", (naming.find_fanhao("hhd800.com@SSIS-088中文字幕.mp4") or {}).get("fanhao", "").upper() == "SSIS-088")
+
+lux = naming.find_fanhao("259LUXU-1900.mp4")
+check("前置数字厂牌 259LUXU-1900 整体识别", lux and lux["fanhao"] == "259LUXU-1900", lux)
+check("259LUXU 标记前置数字为 True", lux and lux["has_leading_digits"] is True, lux)
+check("www前缀 + 259LUXU",
+      (naming.find_fanhao("www.98T.la@259LUXU-1901.zh-CN.mp4") or {}).get("fanhao", "") == "259LUXU-1901")
+
+check("非番号 hello world -> None", naming.find_fanhao("hello world.mp4") is None)
+check("非番号 纯数字 -> None", naming.find_fanhao("123456.mp4") is None)
+check("排除伪番号 hd-1080", naming.find_fanhao("hd-1080p.mkv") is None,
+      naming.find_fanhao("hd-1080p.mkv"))
+
+# ===========================================================================
+print("\n=== B. 标记插入 ===")
+marked = naming.insert_mark_after_fanhao(USER_FILE, "-U")
+EXPECTED = USER_FILE.replace("DASS-787", "DASS-787-U")
+check("用户原始场景完全匹配", marked == EXPECTED, f"\n    got: {marked}\n    exp: {EXPECTED}")
+check("其余部分不变", marked.rsplit("-U", 1)[1] == EXPECTED.rsplit("-U", 1)[1])
+
+check("幂等：已带 -U 不重复添加", naming.insert_mark_after_fanhao(marked, "-U") == marked)
+check("不同标记可叠加到已有标记前",
+      naming.insert_mark_after_fanhao("DASS-787-C.mp4", "-U") == "DASS-787-U-C.mp4")
+
+# ===========================================================================
+print("\n=== C. 关键字匹配（不分大小写）===")
+check("Restored 大小写不敏感", naming.match_any_keyword(USER_FILE, ["RESTORED"]) == "RESTORED")
+check("restored", naming.match_any_keyword(USER_FILE, ["restored"]) == "restored")
+check("多关键字命中第一个", naming.match_any_keyword("abc_破解_def.mp4", ["xx", "破解", "yy"]) == "破解")
+check("未命中 -> None", naming.match_any_keyword("plain.mp4", ["zzz"]) is None)
+
+# ===========================================================================
+print("\n=== D. 投递引擎 ===")
+
+RULES = [
+    {
+        "id": "r1", "name": "还原版", "kind": "jav", "enabled": True,
+        "keywords": ["restored"], "mark": "-U", "target_dir": OUT_JAV, "action": "move",
+    },
+    {
+        "id": "r2", "name": "无码", "kind": "jav", "enabled": True,
+        "keywords": ["uncensored", "无码"], "mark": "-U", "target_dir": OUT_UNCENSORED, "action": "move",
+    },
+    {
+        "id": "r3", "name": "其它视频", "kind": "other", "enabled": True,
+        "keywords": ["documentary"], "mark": "", "target_dir": OUT_OTHER, "action": "move",
+    },
+]
+
+
+def base_cfg(**over):
+    cfg = {
+        "SCAN_DIR": SCAN,
+        "MIN_SIZE_MB": 1,
+        "RECURSIVE": True,
+        "REMOVE_EMPTY_DIRS": True,
+        "OVERWRITE": True,
+        "SETTLE_SECONDS": 0,
+        "RULES": [dict(r) for r in RULES],
+    }
+    cfg.update(over)
+    return cfg
+
+
+# --- D1: 完整流程 ---
+clean(SCAN, OUT_JAV, OUT_UNCENSORED, OUT_OTHER)
+touch(os.path.join(SCAN, USER_FILE), 2 * MB)                       # 大文件，命中 restored
+touch(os.path.join(SCAN, "sub", "ABC-123-uncensored.mp4"), 2 * MB)  # 子目录，命中无码
+touch(os.path.join(SCAN, "small.mp4"), 100)                          # 小文件，应删除
+touch(os.path.join(SCAN, "tiny.nfo"), 10)                            # 小非媒体，同样删除
+touch(os.path.join(SCAN, "My.Holiday.Documentary.2024.mp4"), 2 * MB)  # 非JAV，命中 other
+touch(os.path.join(SCAN, "no_rule.mp4"), 2 * MB)                     # 无关键字，保留
+touch(os.path.join(SCAN, "restored_no_fanhao.mp4"), 2 * MB)          # 命中但无番号，跳过
+
+stats = deliver.run_deliver(base_cfg(), dry_run=False)
+check("扫描到 7 个文件", stats["scanned"] == 7, stats["scanned"])
+check("删除小文件 2 个", stats["deleted"] == 2, stats)
+check("移动 3 个", stats["moved"] == 3, stats)
+
+jav_out = os.path.join(OUT_JAV, EXPECTED)
+check("用户文件已改名并移动到 jav 目录", os.path.exists(jav_out), os.listdir(OUT_JAV) if os.path.isdir(OUT_JAV) else "目录不存在")
+check("jav 目录内文件名正确", os.listdir(OUT_JAV) == [EXPECTED], os.listdir(OUT_JAV))
+
+unc = os.listdir(OUT_UNCENSORED) if os.path.isdir(OUT_UNCENSORED) else []
+check("无码文件投递正确（标记 -U）", unc == ["ABC-123-U-uncensored.mp4"], unc)
+
+other = os.listdir(OUT_OTHER) if os.path.isdir(OUT_OTHER) else []
+check("非JAV按关键字投递且不改名", other == ["My.Holiday.Documentary.2024.mp4"], other)
+
+check("无规则文件保留在源目录", os.path.exists(os.path.join(SCAN, "no_rule.mp4")))
+check("命中但无番号的文件保留", os.path.exists(os.path.join(SCAN, "restored_no_fanhao.mp4")))
+check("小文件已删除", not os.path.exists(os.path.join(SCAN, "small.mp4")))
+check("小 nfo 已删除", not os.path.exists(os.path.join(SCAN, "tiny.nfo")))
+check("空的子目录已清理", not os.path.exists(os.path.join(SCAN, "sub")))
+
+# --- D2: Dry Run 不做任何改动 ---
+clean(SCAN, OUT_JAV)
+touch(os.path.join(SCAN, "XYZ-999-restored.mp4"), 2 * MB)
+stats = deliver.run_deliver(base_cfg(), dry_run=True)
+check("Dry Run 标记 dry-run", all(d["action"] == "dry-run" for d in stats["details"]), stats["details"])
+check("Dry Run 源文件仍在", os.path.exists(os.path.join(SCAN, "XYZ-999-restored.mp4")))
+check("Dry Run 目标为空", os.listdir(OUT_JAV) == [], os.listdir(OUT_JAV))
+
+# --- D3: 复制模式保留源文件 ---
+clean(SCAN, OUT_JAV)
+touch(os.path.join(SCAN, "CPY-111-restored.mp4"), 2 * MB)
+copy_rules = [dict(RULES[0], action="copy")]
+stats = deliver.run_deliver(base_cfg(RULES=copy_rules), dry_run=False)
+check("复制模式统计 copied=1", stats["copied"] == 1, stats)
+check("复制模式源文件仍在", os.path.exists(os.path.join(SCAN, "CPY-111-restored.mp4")))
+check("复制模式目标存在且改名", os.path.exists(os.path.join(OUT_JAV, "CPY-111-U-restored.mp4")),
+      os.listdir(OUT_JAV))
+
+# --- D4: 覆盖模式 ---
+clean(SCAN, OUT_JAV)
+touch(os.path.join(OUT_JAV, "OVR-222-U-restored.mp4"), 5)
+check("覆盖前旧文件存在", os.path.exists(os.path.join(OUT_JAV, "OVR-222-U-restored.mp4")))
+touch(os.path.join(SCAN, "OVR-222-restored.mp4"), 2 * MB)
+deliver.run_deliver(base_cfg(), dry_run=False)
+p = os.path.join(OUT_JAV, "OVR-222-U-restored.mp4")
+check("覆盖后文件被替换（体积变为 2MB）", os.path.exists(p) and os.path.getsize(p) == 2 * MB,
+      os.path.getsize(p) if os.path.exists(p) else "缺失")
+check("覆盖模式不产生 _1 副本", len(os.listdir(OUT_JAV)) == 1, os.listdir(OUT_JAV))
+
+# --- D5: 不覆盖模式产生唯一名 ---
+clean(SCAN, OUT_JAV)
+touch(os.path.join(OUT_JAV, "NOV-333-U-restored.mp4"), 5)
+touch(os.path.join(SCAN, "NOV-333-restored.mp4"), 2 * MB)
+deliver.run_deliver(base_cfg(OVERWRITE=False), dry_run=False)
+names = sorted(os.listdir(OUT_JAV))
+check("不覆盖模式生成 _1 副本", names == ["NOV-333-U-restored.mp4", "NOV-333-U-restored_1.mp4"], names)
+
+# --- D6: 体积阈值边界 ---
+clean(SCAN, OUT_JAV)
+touch(os.path.join(SCAN, "EXACT-444-restored.mp4"), 1 * MB)   # 正好等于阈值 -> 处理
+touch(os.path.join(SCAN, "UNDER-555-restored.mp4"), MB - 1)   # 小于阈值 -> 删除
+stats = deliver.run_deliver(base_cfg(MIN_SIZE_MB=1), dry_run=False)
+check("等于阈值不被删除", os.path.exists(os.path.join(OUT_JAV, "EXACT-444-U-restored.mp4")))
+check("小于阈值被删除", not os.path.exists(os.path.join(SCAN, "UNDER-555-restored.mp4")))
+
+# --- D7: 未配置监控目录 ---
+stats = deliver.run_deliver(base_cfg(SCAN_DIR=""), dry_run=False)
+check("空监控目录返回失败", stats["success"] is False and "未配置" in stats["error"], stats)
+
+stats = deliver.run_deliver(base_cfg(SCAN_DIR=os.path.join(TMP, "not_exist")), dry_run=False)
+check("目录不存在返回失败", stats["success"] is False, stats)
+
+# ===========================================================================
+print("\n=== E. API ===")
+r = client.get("/api/deliver/config")
+d = r.get_json()
+check("GET config 成功", d["success"] is True and "config" in d)
+
+payload = {
+    "ENABLED": True,
+    "SCAN_DIR": SCAN,
+    "MIN_SIZE_MB": 50,
+    "RULES": RULES,
+}
+r = client.post("/api/deliver/config", json=payload)
+d = r.get_json()
+check("POST config 保存成功", d["success"] is True, d)
+check("配置已落盘", os.path.exists(os.path.join(CONFIG_DIR, "deliver.json")))
+saved = json.load(open(os.path.join(CONFIG_DIR, "deliver.json"), encoding="utf-8"))
+check("MIN_SIZE_MB 保存正确", saved["MIN_SIZE_MB"] == 50, saved.get("MIN_SIZE_MB"))
+check("规则数保存正确", len(saved["RULES"]) == 3, len(saved.get("RULES", [])))
+
+# 关键字字符串形式的规范化
+r = client.post("/api/deliver/config", json={"RULES": [dict(RULES[0], keywords="restored，uncensored, foo")]})
+saved = r.get_json()["config"]
+check("逗号/中文逗号分隔的关键字被拆分",
+      saved["RULES"][0]["keywords"] == ["restored", "uncensored", "foo"], saved["RULES"][0]["keywords"])
+
+# 预览接口
+r = client.post("/api/deliver/preview", json={"files": [USER_FILE, "plain.mp4"], "keywords": ["restored"], "mark": "-U"})
+d = r.get_json()
+check("预览接口成功", d["success"] is True and len(d["results"]) == 2)
+check("预览输出与预期一致", d["results"][0]["output"] == EXPECTED, d["results"][0]["output"])
+check("预览识别番号", d["results"][0]["fanhao"].upper() == "DASS-787")
+check("预览未命中不改名", d["results"][1]["output"] == "plain.mp4")
+
+# 目录浏览
+r = client.get(f"/api/deliver/browse?path={TMP}")
+d = r.get_json()
+check("浏览目录成功", d["success"] is True, d)
+check("可看到 inbox", any(x["name"] == "inbox" for x in d["dirs"]), d.get("dirs"))
+
+# 立即执行
+clean(SCAN, OUT_JAV)
+touch(os.path.join(SCAN, "RUN-777-restored.mp4"), 2 * MB)
+r = client.post("/api/deliver/run", json={"dry_run": False, "MIN_SIZE_MB": 1, "RULES": RULES, "SCAN_DIR": SCAN})
+d = r.get_json()
+check("run 接口成功", d["success"] is True, d)
+check("run 实际移动文件", os.path.exists(os.path.join(OUT_JAV, "RUN-777-U-restored.mp4")))
+
+r = client.post("/api/deliver/run", json={"dry_run": True, "SCAN_DIR": SCAN, "MIN_SIZE_MB": 1, "RULES": RULES})
+check("run 支持 dry_run", r.get_json()["dry_run"] is True)
+
+# 状态接口
+r = client.get("/api/deliver/status")
+d = r.get_json()
+check("status 返回 watcher", d["success"] is True and "watcher" in d)
+
+print("\n" + "=" * 50)
+print(f"结果: {PASS} 通过, {FAIL} 失败")
+print("=" * 50)
+sys.exit(1 if FAIL else 0)

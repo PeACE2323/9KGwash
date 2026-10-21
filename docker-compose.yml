@@ -15,12 +15,14 @@ services:
       METADATA_BASE_PATH: ${METADATA_BASE_PATH:-}
       WATCHED_DIRS: ${WATCHED_DIRS:-}
     volumes:
-      # 配置 / 日志 / 洗板档案
+      # 配置 / 日志 / 洗板档案 / 投递配置（deliver.json）
       - ./data/config:/config
       # 网盘挂载目录（Alist / CloudDrive2 等挂载到宿主机的路径）
       - ${CLOUD_MOUNT:-./data/media/CloudDrive}:/media/CloudDrive
       # 本地元数据（.strm / .nfo / 刮削图片）目录
       - ${METADATA_HOST_DIR:-./data/metadata}:/metadata
+      # 115 离线下载的“重命名文件夹”，供「文件投递」功能监控（可选）
+      - ${DELIVER_INBOX:-./data/deliver/inbox}:/deliver/inbox
     # 容器内挂载的网盘目录若是 CIFS/NFS，建议改用 bind propagation
     # volumes:
     #   - /mnt/clouddrive/CloudDrive:/media/CloudDrive:rslave
