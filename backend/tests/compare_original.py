@@ -12,9 +12,14 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.environ.get("XIBAN_ORIG_SRC", r"E:\workspace\9kgwash_src\xiban_server.py")
+# 原脚本默认取仓库内的 legacy/，可用 XIBAN_ORIG_SRC 覆盖
+_DEFAULT_SRC = os.path.join(os.path.dirname(ROOT), "legacy", "xiban_server.py")
+SRC = os.environ.get("XIBAN_ORIG_SRC", _DEFAULT_SRC)
 
-sys.path.insert(0, os.path.join(ROOT, ".venv", "Lib", "site-packages"))
+# 本地开发时优先使用 .venv 中的依赖（CI/系统环境下自动忽略）
+_venv_sp = os.path.join(ROOT, ".venv", "Lib", "site-packages")
+if os.path.isdir(_venv_sp):
+    sys.path.insert(0, _venv_sp)
 
 TMP_BASE = os.path.join(ROOT, "tests", "_tmp")
 work = os.path.join(TMP_BASE, "orig_cmp")

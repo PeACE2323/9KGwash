@@ -10,7 +10,8 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(r"E:\workspace\9kgwash\backend")
+# 兼容本地与 CI：以本文件位置推导项目根目录（backend/）
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 html = (ROOT / "app/templates/index.html").read_text(encoding="utf-8")
 js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
