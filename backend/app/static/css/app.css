@@ -144,6 +144,8 @@ body {
   min-height: 0;
   animation: rise 0.35s ease both;
 }
+/* 配置卡片内容不会被压缩，避免在矮窗口里挤成一团 */
+.card > .form { flex: 0 0 auto; }
 .card-grow { flex: 1 1 auto; min-height: 0; }
 .card-fill { height: 100%; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -525,10 +527,88 @@ select option { background: #121826; }
 @media (max-width: 1400px) {
   .layout { grid-template-columns: minmax(280px, 1fr) minmax(300px, 1fr) minmax(320px, 1.1fr); }
 }
+
+/*
+ * 窄屏（平板/手机/Unraid 内置 VNC 小窗）：三栏改为纵向堆叠。
+ * 关键：必须把 grid 行高从 1fr 改为 auto，并解除所有 flex 伸展，
+ * 否则每张卡片会被压缩到固定行高，内容溢出后压住下一张卡片。
+ */
 @media (max-width: 1120px) {
-  body { overflow: auto; }
-  .layout { grid-template-columns: 1fr; overflow: visible; }
-  .log-box { min-height: 320px; }
-  .card-fill { height: auto; }
-  .history-box { max-height: 260px; }
+  html, body {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .layout {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: none;
+    grid-auto-rows: auto;
+    gap: 14px;
+    padding: 12px 12px 20px;
+    overflow: visible;
+  }
+
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  /* 所有卡片退回内容高度，禁止被压缩 */
+  .card,
+  .card-grow,
+  .card-fill {
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 0;
+  }
+
+  .history-box { max-height: 300px; }
+  .result-box { min-height: 200px; max-height: 46vh; }
+  .log-box { min-height: 300px; max-height: 60vh; }
+  .tab-panel { min-height: 0; }
+}
+
+/* 极窄屏：进一步收紧内边距与字号 */
+@media (max-width: 560px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .brand-text p { display: none; }
+  .layout { padding: 10px 10px 16px; }
+  .card { padding: 13px; border-radius: 13px; }
+  .tool-grid { grid-template-columns: 1fr; }
+  .panel-actions { flex-direction: column; }
+  .panel-actions .btn { width: 100%; }
+  .log-tools { flex-wrap: wrap; }
+}
+
+/* 低矮窗口（如 Unraid VNC 800x600）：同样放弃整页定高 */
+@media (max-height: 700px) and (min-width: 1121px) {
+  html, body {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .layout {
+    flex: 0 0 auto;
+    padding: 10px 14px 14px;
+    gap: 12px;
+    grid-auto-rows: auto;
+    min-height: 0;
+  }
+  .col { min-height: 0; }
+  .card { padding: 13px; }
+  .log-box { min-height: 140px; }
+  .result-box { min-height: 110px; }
+  .history-box { min-height: 90px; }
 }

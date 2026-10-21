@@ -25,18 +25,34 @@ def protected_paths() -> list[str]:
     return paths
 
 
+def _norm(p: str) -> str:
+    """统一分隔符并去掉尾部斜杠，便于跨平台前缀比较。
+
+    容器内（Linux）路径本身只用 ``/``，此函数等价于恒等变换；
+    在 Windows 上开发/测试时可避免 ``C:\\a/b`` 与 ``C:\\a`` 前缀判断失误，
+    使安全锁行为与生产环境保持一致。
+    """
+    if not p:
+        return p
+    q = str(p).replace("\\", "/") if os.sep == "\\" else str(p)
+    q = q.rstrip("/")
+    return q or "/"
+
+
 def safe_delete_dir(dir_path: str) -> bool:
     """删除整个目录（含安全边界校验）。"""
     if not dir_path:
         return False
-    protected = protected_paths()
+    protected = [_norm(p) for p in protected_paths()]
+    target = _norm(dir_path)
+
     is_safe = False
     for p in protected:
-        if dir_path.startswith(p) and dir_path.rstrip("/") != p:
+        if target.startswith(p) and target != p:
             is_safe = True
             break
 
-    if not is_safe or dir_path.rstrip("/") in protected:
+    if not is_safe or target in protected:
         logger.warning(f"⚠️ [安全锁] 试图删除越界或受保护的根目录 {dir_path}，已强制拦截！")
         return False
 
