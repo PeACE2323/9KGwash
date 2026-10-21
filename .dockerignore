@@ -1,0 +1,12 @@
+.git
+.gitignore
+.pydeps
+.wheels
+.piptmp
+.venv
+.dev
+__pycache__/
+*.pyc
+data/
+.env
+tests/_tmp/

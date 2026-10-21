@@ -1,0 +1,26 @@
+services:
+  9kgwash:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: 9kgwash:9.15.0
+    container_name: 9kgwash
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5000}:5000"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 以下为可选的“结构路径”覆盖，留空则完全以 /config/config.json 为准
+      MOUNT_BASE_PATH: ${MOUNT_BASE_PATH:-}
+      METADATA_BASE_PATH: ${METADATA_BASE_PATH:-}
+      WATCHED_DIRS: ${WATCHED_DIRS:-}
+    volumes:
+      # 配置 / 日志 / 洗板档案
+      - ./data/config:/config
+      # 网盘挂载目录（Alist / CloudDrive2 等挂载到宿主机的路径）
+      - ${CLOUD_MOUNT:-./data/media/CloudDrive}:/media/CloudDrive
+      # 本地元数据（.strm / .nfo / 刮削图片）目录
+      - ${METADATA_HOST_DIR:-./data/metadata}:/metadata
+    # 容器内挂载的网盘目录若是 CIFS/NFS，建议改用 bind propagation
+    # volumes:
+    #   - /mnt/clouddrive/CloudDrive:/media/CloudDrive:rslave

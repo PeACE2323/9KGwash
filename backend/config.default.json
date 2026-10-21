@@ -1,0 +1,11 @@
+{
+    "MOUNT_BASE_PATH": "/media/CloudDrive",
+    "METADATA_BASE_PATH": "/metadata",
+    "WATCHED_DIRS": [
+        "/115open/9KG/STRM"
+    ],
+    "DRY_RUN": true,
+    "DB_ONLINE_WEBHOOK": "",
+    "STRM_WEBHOOK": "",
+    "IGNORE_LEADING_DIGITS": true
+}

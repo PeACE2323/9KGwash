@@ -1,0 +1,11 @@
+{
+    "MOUNT_BASE_PATH": "/media/CloudDrive",
+    "METADATA_BASE_PATH": "/metadata",
+    "WATCHED_DIRS": [
+        "/115open/9KG/STRM"
+    ],
+    "DRY_RUN": false,
+    "DB_ONLINE_WEBHOOK": "http://192.168.x.x:9090/api/webhook",
+    "STRM_WEBHOOK": "http://192.168.x.x:9527/api/sync/lift_by_token?type=lift_sync&token=YOUR_TOKEN",
+    "IGNORE_LEADING_DIGITS": true
+}

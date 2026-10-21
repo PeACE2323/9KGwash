@@ -1,0 +1,29 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---------- 本地运行产物 ----------
+data/
+.dev/
+tests/_tmp/
+*.log
+config.json
+wash_history.json
+
+# ---------- 依赖/缓存 ----------
+.pydeps/
+.wheels/
+.piptmp/
+.pytest_cache/
+
+# ---------- 环境变量 ----------
+.env
+
+# ---------- 编辑器/系统 ----------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
