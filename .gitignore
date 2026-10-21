@@ -27,3 +27,7 @@ wash_history.json
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 截图工具产生的浏览器缓存
+*-shot-profile/
+

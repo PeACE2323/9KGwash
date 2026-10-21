@@ -25,8 +25,11 @@ import shutil
 import threading
 import time
 
-from ..logging_setup import logger
+from ..logging_setup import categorized
 from . import naming
+
+# 本模块日志统一打上分类标签，供前端「活动日志」按标签页筛选
+logger = categorized("deliver")
 
 VIDEO_EXTS = (
     ".mp4", ".mkv", ".avi", ".ts", ".wmv", ".iso", ".rmvb", ".flv", ".m2ts",
@@ -438,12 +441,8 @@ def run_deliver(raw_cfg: dict, dry_run: bool = False, only_recent: bool = False)
             logger.warning(f"📦 [投递] 监控目录不存在: {scan_dir}")
             return stats
 
-        logger.info(
-            f"📦 [投递] 开始扫描 {scan_dir} | 最小体积={cfg['MIN_SIZE_MB']}MB | "
-            f"递归={'是' if cfg['RECURSIVE'] else '否'} | 规则数={len(cfg['RULES'])}"
-            + (" | [Dry Run]" if dry_run else "")
-        )
-
+        # 注意：不再输出「开始扫描 + 目录路径」这类噪音日志，
+        # 日志里只保留逐文件的处理结果与最终汇总，避免活动日志被路径刷屏。
         now = time.time()
         settle = cfg.get("SETTLE_SECONDS", 0)
 
@@ -461,7 +460,7 @@ def run_deliver(raw_cfg: dict, dry_run: bool = False, only_recent: bool = False)
             try:
                 r = process_one_file(path, cfg, dry_run=dry_run)
             except Exception as e:  # noqa: BLE001
-                logger.error(f"📦 [投递] 处理异常 [{path}]: {e}")
+                logger.error(f"📦 [投递] 处理异常 [{os.path.basename(path)}]: {e}")
                 stats["failed"] += 1
                 continue
 
@@ -483,9 +482,16 @@ def run_deliver(raw_cfg: dict, dry_run: bool = False, only_recent: bool = False)
         if cfg.get("REMOVE_EMPTY_DIRS") and not dry_run:
             stats["removed_dirs"] = remove_empty_dirs(scan_dir)
 
+        # 没有任何文件被处理时不刷日志，保持活动日志干净
+        if stats["scanned"] == 0:
+            return stats
+
+        # 汇总行：作为一次投递任务的「执行结果」，替代旧的结果卡片
+        dry_label = " [Dry Run 预览]" if dry_run else ""
         logger.info(
-            f"📦 [投递] 任务完成：扫描 {stats['scanned']}，删除 {stats['deleted']}，"
-            f"移动 {stats['moved']}，复制 {stats['copied']}，跳过 {stats['skipped']}，"
-            f"失败 {stats['failed']}，清理空目录 {stats['removed_dirs']}"
+            f"📦 [投递] 任务完成{dry_label}：扫描 {stats['scanned']} 个文件 | "
+            f"移动 {stats['moved']} · 复制 {stats['copied']} · 删除小文件 {stats['deleted']} · "
+            f"跳过 {stats['skipped']} · 失败 {stats['failed']}"
+            + (f" · 清理空目录 {stats['removed_dirs']}" if stats["removed_dirs"] else "")
         )
         return stats

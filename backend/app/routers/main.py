@@ -54,13 +54,81 @@ def dashboard():
 # ---------------------------------------------------------------------------
 @bp.route("/api/logs")
 def get_logs():
-    try:
-        with open(config.LOG_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            return jsonify({"logs": lines[-100:]})
-    except Exception as e:  # noqa: BLE001
-        return jsonify({"logs": [f"无法读取日志文件: {str(e)}"]})
+    """读取最近日志。
 
+    兼容原接口：无参数时返回最近 100 行原始文本列表。
+    新增参数：
+        category  按分类过滤（all/wash/hound/dedup/deliver/emby/system）
+        limit     返回行数（默认 100，最大 500）
+        strip     是否去掉正文里的分类标签（默认 1）
+    """
+    from ..logging_setup import VALID_CATEGORIES, parse_category, strip_category
+
+    category = (request.args.get("category") or "all").strip().lower()
+    if category not in VALID_CATEGORIES:
+        category = "all"
+
+    try:
+        limit = int(request.args.get("limit", 100))
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, 500))
+
+    strip = request.args.get("strip", "1") not in ("0", "false", "no")
+
+    try:
+        with open(config.LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        # 过滤时需要看全量再截断，否则某个分类可能永远为空
+        if category != "all":
+            kept = []
+            for line in lines:
+                # 行格式：2025-01-01 00:00:00 [INFO] #cat#正文
+                body = line.split("]", 1)[-1] if "]" in line else line
+                if parse_category(body.strip()) == category:
+                    kept.append(line)
+            lines = kept
+
+        lines = lines[-limit:]
+
+        if strip:
+            out = []
+            for line in lines:
+                out.append(strip_category(line))
+        else:
+            out = lines
+
+        return jsonify({"logs": out, "category": category, "total": len(out)})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"logs": [f"无法读取日志文件: {str(e)}"], "category": category})
+
+
+@bp.route("/api/logs/categories")
+def get_log_categories():
+    """返回可用分类及其当前条数，供前端渲染标签页。"""
+    from ..logging_setup import CATEGORY_LABELS, parse_category
+
+    counts = {k: 0 for k in CATEGORY_LABELS}
+    try:
+        with open(config.LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                body = line.split("]", 1)[-1] if "]" in line else line
+                cat = parse_category(body.strip())
+                counts[cat] = counts.get(cat, 0) + 1
+                counts["all"] += 1
+    except Exception:  # noqa: BLE001
+        pass
+
+    return jsonify(
+        {
+            "success": True,
+            "categories": [
+                {"key": k, "label": v, "count": counts.get(k, 0)}
+                for k, v in CATEGORY_LABELS.items()
+            ],
+        }
+    )
 
 # ---------------------------------------------------------------------------
 # 配置热更新

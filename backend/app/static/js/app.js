@@ -21,6 +21,7 @@
     currentView: "overview",
     logPaused: false,
     lastLogText: "",
+    logCategory: "all",
     emptyFolders: [],
     duplicates: [],
     busy: false,
@@ -148,7 +149,10 @@
 
     // 首次进入某视图时按需加载
     if (name === "overview") loadStatus();
-    if (name === "logs") fetchLogs();
+    if (name === "logs") {
+      fetchLogs();
+      refreshLogCounts();
+    }
     if (name === "deliver") loadDeliverConfig();
   }
 
@@ -464,43 +468,6 @@
     }
   }
 
-  function renderDeliverResult(stats) {
-    const card = $("deliver-result-card");
-    const box = $("deliver-result");
-    card.hidden = false;
-
-    const summary =
-      `<div class="deliver-row"><span class="tag-k tag-moved">汇总</span>` +
-      `<span class="fname">扫描 ${stats.scanned} · 删除 ${stats.deleted} · 移动 ${stats.moved} · ` +
-      `复制 ${stats.copied} · 跳过 ${stats.skipped} · 失败 ${stats.failed} · 清理空目录 ${stats.removed_dirs}` +
-      (stats.dry_run ? " · 【Dry Run 预览】" : "") +
-      `</span></div>`;
-
-    const tagMap = {
-      moved: ["tag-moved", "移动"],
-      copied: ["tag-copied", "复制"],
-      deleted: ["tag-deleted", "删除"],
-      "dry-run": ["tag-copied", "预览"],
-      failed: ["tag-failed", "失败"],
-      skipped: ["tag-skipped", "跳过"],
-    };
-
-    const rows = (stats.details || [])
-      .map((d) => {
-        const [cls, label] = tagMap[d.action] || ["tag-skipped", d.action];
-        const name = d.new_name || d.file;
-        const sub = d.target ? ` → ${d.target}` : d.reason ? ` · ${d.reason}` : "";
-        return (
-          `<div class="deliver-row"><span class="tag-k ${cls}">${label}</span>` +
-          `<span class="fname" title="${escapeHtml(d.file)}">${escapeHtml(name)}</span>` +
-          `<span class="reason" title="${escapeHtml(sub)}">${escapeHtml(sub.slice(0, 70))}</span></div>`
-        );
-      })
-      .join("");
-
-    box.innerHTML = summary + (rows || '<div class="deliver-row"><span class="fname">没有产生任何变更</span></div>');
-  }
-
   async function runDeliver(dryRun) {
     const cfg = collectDeliverConfig();
     if (!cfg.SCAN_DIR) {
@@ -531,14 +498,17 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dry_run: dryRun }),
       });
-      renderDeliverResult(stats);
+      // 执行结果统一写入「活动日志 → 文件投递」，这里不再单独渲染结果面板
       if (stats.success) {
         deliverMsg(dryRun ? "✅ 预览完成" : "✅ 执行完成", "ok");
+        const handled = stats.moved + stats.copied + stats.deleted;
         toast(
           dryRun
-            ? `预览完成：将处理 ${(stats.details || []).length} 项`
-            : `完成：删除 ${stats.deleted}，移动 ${stats.moved}，复制 ${stats.copied}`
+            ? `预览完成：将处理 ${handled} 个文件，详见活动日志`
+            : `完成：移动 ${stats.moved} · 复制 ${stats.copied} · 删除 ${stats.deleted}，详见活动日志`
         );
+        // 有实际动作时顺带刷新日志计数，便于用户点进去看
+        if (handled > 0) refreshLogCounts();
       } else {
         deliverMsg("❌ " + (stats.error || "执行失败"), "err");
         toast(stats.error || "执行失败");
@@ -692,9 +662,10 @@
   async function fetchLogs() {
     if (state.logPaused) return;
     try {
-      const data = await api("/api/logs");
+      const cat = state.logCategory || "all";
+      const data = await api(`/api/logs?category=${encodeURIComponent(cat)}&limit=200`);
       const lines = data.logs || [];
-      const text = lines.join("");
+      const text = cat + "|" + lines.join("");
       if (text !== state.lastLogText) {
         state.lastLogText = text;
         renderLogs(lines);
@@ -702,6 +673,29 @@
     } catch (e) {
       /* 静默重试 */
     }
+  }
+
+  /** 刷新各分类的条数徽标 */
+  async function refreshLogCounts() {
+    try {
+      const data = await api("/api/logs/categories");
+      (data.categories || []).forEach((c) => {
+        const el = document.querySelector(`.log-tab-count[data-count="${c.key}"]`);
+        if (el) el.textContent = c.count ? c.count : "";
+      });
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+
+  /** 切换日志分类 */
+  function switchLogCategory(cat) {
+    state.logCategory = cat;
+    state.lastLogText = "";
+    document.querySelectorAll(".log-tab").forEach((t) => {
+      t.classList.toggle("active", t.dataset.cat === cat);
+    });
+    fetchLogs();
   }
 
   function toggleLogPause() {
@@ -998,6 +992,12 @@
       state.lastLogText = "\u0000-cleared";
     });
 
+    // 日志分类标签页
+    $("log-tabs").addEventListener("click", (e) => {
+      const tab = e.target.closest(".log-tab");
+      if (tab) switchLogCategory(tab.dataset.cat);
+    });
+
     /* ---------- 文件投递 ---------- */
     $("deliver-save-btn").addEventListener("click", () => saveDeliverConfig(true));
     $("deliver-preview-btn").addEventListener("click", () => runDeliver(true));
@@ -1094,7 +1094,14 @@
     bind();
     switchView(location.hash.replace("#", "") || "overview");
     fetchLogs();
-    setInterval(fetchLogs, 2000);
+    // 仅在日志视图可见时轮询，减少无谓请求
+    setInterval(() => {
+      if (state.currentView === "logs") fetchLogs();
+    }, 2000);
+    // 分类条数每 10 秒刷新一次
+    setInterval(() => {
+      if (state.currentView === "logs") refreshLogCounts();
+    }, 10000);
     setInterval(() => {
       if (state.currentView === "overview") loadStatus();
     }, 15000);

@@ -993,3 +993,69 @@ select option { background: #121826; }
 @media (max-width: 640px) {
   .rule-move { order: 3; }
 }
+
+/* ---------- 活动日志分类标签 ---------- */
+.log-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.log-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: rgba(148, 163, 184, 0.07);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+}
+.log-tab:hover { color: #fff; border-color: var(--pink); background: rgba(236, 72, 153, 0.12); }
+.log-tab.active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--pink), #a855f7);
+  border-color: transparent;
+  box-shadow: 0 6px 16px -10px rgba(236, 72, 153, 1);
+}
+
+.log-tab-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  min-width: 14px;
+  text-align: center;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.log-tab-count:empty { display: none; }
+.log-tab.active .log-tab-count { background: rgba(0, 0, 0, 0.28); }
+
+.link-inline {
+  color: var(--pink-soft);
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(236, 72, 153, 0.5);
+  cursor: pointer;
+}
+.link-inline:hover { color: #fff; }
+
+@media (max-width: 640px) {
+  .log-tab { font-size: 11px; padding: 4px 9px; }
+}
+
+/* ---------- 按钮内 emoji 与文字的呼吸感 ---------- */
+/* 按钮文本形如「💾 保存设置」，emoji 与首字间距偏紧，这里统一撑开 */
+.btn { letter-spacing: 0.01em; }
+.btn::first-letter { margin-right: 0.34em; }
+
+/* 标签页、胶囊按钮同理 */
+.log-tab::first-letter { margin-right: 0.24em; }

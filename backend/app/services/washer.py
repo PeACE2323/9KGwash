@@ -17,7 +17,7 @@ import os
 import re
 
 from .. import config
-from ..logging_setup import logger
+from ..logging_setup import categorized
 from ..services import cms, fs, history
 from ..services.fanhao import (
     VIDEO_EXTS,
@@ -26,6 +26,9 @@ from ..services.fanhao import (
     parse_fanhao_info,
     version_hash,
 )
+
+# 本模块日志统一打上分类标签，供前端「活动日志」按标签页筛选
+logger = categorized("wash")
 
 _PART_DISPLAY_RE = re.compile(
     r"[-_]?(CD[1-9]|PART[A-E])(?![a-zA-Z0-9])$|[-_][AB](?![a-zA-Z0-9])$", re.IGNORECASE

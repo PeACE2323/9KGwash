@@ -12,8 +12,11 @@ import threading
 import time
 
 from .. import config as app_config
-from ..logging_setup import logger
+from ..logging_setup import categorized
 from . import deliver
+
+# 本模块日志统一打上分类标签，供前端「活动日志」按标签页筛选
+logger = categorized("deliver")
 
 DELIVER_CONFIG_FILE = os.path.join(app_config.CONFIG_DIR, "deliver.json")
 

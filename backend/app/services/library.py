@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 
 from .. import config
-from ..logging_setup import logger
+from ..logging_setup import categorized
 from ..services import fs, history
 from ..services.fanhao import (
     LOCAL_MEDIA_EXTS,
@@ -24,6 +24,36 @@ from ..services.fanhao import (
     parse_fanhao_info,
     version_hash,
 )
+
+
+class _LibraryLogger:
+    """library 同时承载「查重」与「空间猎犬」两套流程，
+    这里按日志正文里的业务标识自动归类，避免逐条改写日志文案。"""
+
+    __slots__ = ("_dedup", "_hound")
+
+    def __init__(self):
+        self._dedup = categorized("dedup")
+        self._hound = categorized("hound")
+
+    def _pick(self, msg):
+        text = str(msg)
+        if "空间猎犬" in text or "空间清理" in text:
+            return self._hound
+        return self._dedup
+
+    def info(self, msg, *a, **k):
+        self._pick(msg).info(msg, *a, **k)
+
+    def warning(self, msg, *a, **k):
+        self._pick(msg).warning(msg, *a, **k)
+
+    def error(self, msg, *a, **k):
+        self._pick(msg).error(msg, *a, **k)
+
+
+# 本模块日志按业务自动打分类标签，供前端「活动日志」按标签页筛选
+logger = _LibraryLogger()
 
 
 def _aux_dirs() -> set:

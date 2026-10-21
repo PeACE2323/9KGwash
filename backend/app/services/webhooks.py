@@ -12,9 +12,12 @@ import time
 import requests
 
 from .. import config
-from ..logging_setup import logger
+from ..logging_setup import categorized
 from ..services import fs, history, washer
 from ..services.fanhao import get_weight_and_fanhao, is_jav, parse_fanhao_info
+
+# 本模块日志统一打上分类标签，供前端「活动日志」按标签页筛选
+logger = categorized("emby")
 
 
 # ---------------------------------------------------------------------------

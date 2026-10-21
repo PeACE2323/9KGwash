@@ -218,6 +218,10 @@
               <button class="btn btn-danger" id="deliver-run-btn">🚀 立即执行投递</button>
               <span class="hint-inline" id="deliver-status-text"></span>
             </div>
+            <p class="view-tip" style="margin:10px 0 0">
+              执行结果与每个文件的处理详情见
+              <a href="#logs" class="link-inline" data-goto="logs">📡 活动日志 → 文件投递</a>
+            </p>
           </div>
 
           <!-- 规则列表 -->
@@ -241,12 +245,6 @@
             <div id="rule-list" class="rule-list">
               <div class="empty-hint">还没有规则，点击右上角「添加规则」</div>
             </div>
-          </div>
-
-          <!-- 执行结果 -->
-          <div class="card" id="deliver-result-card" hidden>
-            <div class="card-head"><h2>📋 最近一次执行结果</h2></div>
-            <div class="result-box" id="deliver-result" style="max-height:40vh"></div>
           </div>
         </section>
 
@@ -299,13 +297,25 @@
         <section class="view" id="view-logs">
           <div class="card card-fill log-card">
             <div class="card-head">
-              <h2>📡 洗板活动日志</h2>
+              <h2>📡 活动日志</h2>
               <div class="log-tools">
                 <span class="live-dot" id="log-indicator">实时监控中</span>
                 <button class="btn btn-ghost btn-xs" id="pause-btn">⏸️ 暂停</button>
                 <button class="btn btn-ghost btn-xs" id="clear-btn">清屏</button>
               </div>
             </div>
+
+            <!-- 分类标签页 -->
+            <div class="log-tabs" id="log-tabs" role="tablist">
+              <button class="log-tab active" data-cat="all">全部<span class="log-tab-count" data-count="all"></span></button>
+              <button class="log-tab" data-cat="wash">🧽 洗板<span class="log-tab-count" data-count="wash"></span></button>
+              <button class="log-tab" data-cat="hound">🐕 空间猎犬<span class="log-tab-count" data-count="hound"></span></button>
+              <button class="log-tab" data-cat="dedup">🔍 影片查重<span class="log-tab-count" data-count="dedup"></span></button>
+              <button class="log-tab" data-cat="deliver">📦 文件投递<span class="log-tab-count" data-count="deliver"></span></button>
+              <button class="log-tab" data-cat="emby">📺 Emby 中转<span class="log-tab-count" data-count="emby"></span></button>
+              <button class="log-tab" data-cat="system">⚙️ 系统<span class="log-tab-count" data-count="system"></span></button>
+            </div>
+
             <div class="log-box" id="log-box">正在建立安全连接，拉取系统日志...</div>
           </div>
         </section>
