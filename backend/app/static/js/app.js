@@ -159,6 +159,38 @@
     el.className = "status-msg" + (cls ? " " + cls : "");
   }
 
+  /** 根据规则类型切换字段显示与提示文案 */
+  function applyRuleKind(node) {
+    const kind = node.querySelector(".rule-kind").value;
+    const kwInput = node.querySelector(".rule-keywords");
+    const kwLabel = node.querySelector(".rule-kw-label");
+    const tip = node.querySelector(".rule-fallback-tip");
+
+    node.classList.toggle("is-other", kind === "other");
+    node.classList.toggle("is-fallback", kind === "fallback");
+
+    if (kind === "western") {
+      kwLabel.textContent = "厂牌列表（逗号分隔，不分大小写）";
+      kwInput.placeholder = "blackedraw, tushy, vixen";
+    } else if (kind === "fallback") {
+      kwLabel.textContent = "关键字（兜底规则不使用，可留空）";
+      kwInput.placeholder = "—";
+    } else {
+      kwLabel.textContent = "关键字（逗号分隔，不分大小写）";
+      kwInput.placeholder = "restored, uncensored";
+    }
+
+    if (tip) tip.style.display = kind === "fallback" ? "" : "none";
+  }
+
+  /** 刷新每条规则的序号显示 */
+  function refreshRuleOrder() {
+    document.querySelectorAll("#rule-list .rule-item").forEach((node, idx) => {
+      const badge = node.querySelector(".rule-order");
+      if (badge) badge.textContent = idx + 1;
+    });
+  }
+
   function renderRules(rules) {
     const list = $("rule-list");
     const tpl = $("rule-tpl");
@@ -173,6 +205,7 @@
       const node = tpl.content.firstElementChild.cloneNode(true);
       node.dataset.idx = String(idx);
       node.dataset.id = rule.id || "";
+      node.setAttribute("draggable", "true");
 
       node.querySelector(".rule-name").value = rule.name || "";
       node.querySelector(".rule-kind").value = rule.kind || "jav";
@@ -182,12 +215,12 @@
       node.querySelector(".rule-mark").value = rule.mark || "";
       node.querySelector(".rule-target").value = rule.target_dir || "";
 
-      if ((rule.kind || "jav") === "other") node.classList.add("is-other");
       if (rule.enabled === false) node.classList.add("is-disabled");
+      applyRuleKind(node);
 
-      // 类型切换：普通规则隐藏「标记」字段
-      node.querySelector(".rule-kind").addEventListener("change", (e) => {
-        node.classList.toggle("is-other", e.target.value === "other");
+      node.querySelector(".rule-kind").addEventListener("change", () => {
+        applyRuleKind(node);
+        deliverMsg("规则类型已修改，记得保存", "busy");
       });
       node.querySelector(".rule-enabled-cb").addEventListener("change", (e) => {
         node.classList.toggle("is-disabled", !e.target.checked);
@@ -198,6 +231,8 @@
         node.remove();
         if (!$("rule-list").children.length) {
           $("rule-list").innerHTML = '<div class="empty-hint">还没有规则，点击右上角「添加规则」</div>';
+        } else {
+          refreshRuleOrder();
         }
         deliverMsg("已移除规则，记得保存", "busy");
       });
@@ -207,8 +242,89 @@
         loadBrowser(node.querySelector(".rule-target").value || "/");
       });
 
+      // 触屏/键盘备选：上下移动
+      node.querySelector(".rule-up").addEventListener("click", () => moveRule(node, -1));
+      node.querySelector(".rule-down").addEventListener("click", () => moveRule(node, 1));
+
       list.appendChild(node);
     });
+
+    refreshRuleOrder();
+    enableDragSort();
+  }
+
+  /* ---------- 拖动排序 ---------- */
+  let dragNode = null;
+
+  function enableDragSort() {
+    const list = $("rule-list");
+    if (list.dataset.dragBound === "1") return;
+    list.dataset.dragBound = "1";
+
+    list.addEventListener("dragstart", (e) => {
+      const node = e.target.closest(".rule-item");
+      if (!node) return;
+      dragNode = node;
+      node.classList.add("is-dragging");
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox 需要设置数据才会触发拖动
+      try {
+        e.dataTransfer.setData("text/plain", "rule");
+      } catch (_) {}
+    });
+
+    list.addEventListener("dragend", () => {
+      if (dragNode) dragNode.classList.remove("is-dragging");
+      dragNode = null;
+      document.querySelectorAll("#rule-list .rule-item.is-drop-target").forEach((n) =>
+        n.classList.remove("is-drop-target")
+      );
+      refreshRuleOrder();
+      deliverMsg("顺序已调整，记得保存", "busy");
+    });
+
+    list.addEventListener("dragover", (e) => {
+      if (!dragNode) return;
+      e.preventDefault();
+      const over = e.target.closest(".rule-item");
+      if (!over || over === dragNode) return;
+
+      const rect = over.getBoundingClientRect();
+      const after = e.clientY > rect.top + rect.height / 2;
+      if (after) {
+        over.after(dragNode);
+      } else {
+        over.before(dragNode);
+      }
+      refreshRuleOrder();
+    });
+
+    list.addEventListener("drop", (e) => {
+      if (!dragNode) return;
+      e.preventDefault();
+    });
+  }
+
+  /** 上移/下移按钮（拖动的键盘/触屏备选方案） */
+  function moveRule(node, dir) {
+    if (!node) return;
+    const sibling = dir < 0 ? node.previousElementSibling : node.nextElementSibling;
+    if (!sibling) return;
+    if (dir < 0) sibling.before(node);
+    else sibling.after(node);
+    refreshRuleOrder();
+    deliverMsg("顺序已调整，记得保存", "busy");
+  }
+
+  /** 新增规则后滚动到可见位置 */
+  function promiseScrollToLastRule() {
+    setTimeout(() => {
+      const items = document.querySelectorAll("#rule-list .rule-item");
+      const last = items[items.length - 1];
+      if (last && last.scrollIntoView) {
+        last.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 50);
   }
 
   function collectRules() {
@@ -868,7 +984,29 @@
         target_dir: "",
       });
       renderRules(rules);
-      deliverMsg("已新增规则，记得保存", "busy");
+      promiseScrollToLastRule();
+      deliverMsg("已新增规则（排在最后），记得保存", "busy");
+    });
+
+    $("deliver-add-fallback").addEventListener("click", () => {
+      const rules = collectRules();
+      if (rules.some((r) => r.kind === "fallback")) {
+        toast("已存在兜底规则，同一时间只生效第一条");
+        return;
+      }
+      rules.push({
+        id: "",
+        name: "兜底投递",
+        kind: "fallback",
+        action: "move",
+        enabled: true,
+        keywords: [],
+        mark: "",
+        target_dir: "",
+      });
+      renderRules(rules);
+      promiseScrollToLastRule();
+      deliverMsg("已添加兜底规则，请填写目标目录后保存", "busy");
     });
 
     // 监控目录的浏览按钮

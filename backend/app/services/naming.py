@@ -169,3 +169,81 @@ def match_any_keyword(text: str, keywords: list[str]) -> str | None:
         if k and k.lower() in low:
             return k
     return None
+
+
+# ---------------------------------------------------------------------------
+# 欧美番号：厂牌.年.月.日
+#   例：BlackedRaw.26.09.23.Delilah.Dagger...XXX.1080p.MP4-P2P[XC]
+#       Tushy.2024.01.05.xxx.mp4
+# 年份支持 2 位（26）与 4 位（2026）；月/日必须 2 位。
+# ---------------------------------------------------------------------------
+_WESTERN_DATE_RE = re.compile(r"(?<![0-9])(\d{2}|\d{4})\.(\d{2})\.(\d{2})(?!\d)")
+
+
+def find_western(name: str) -> dict | None:
+    """识别欧美番号（厂牌.年.月.日）。
+
+    返回 dict:
+        prefix      日期之前的全部文本（含厂牌与点号），如 ``BlackedRaw.``
+        studio      厂牌名（日期前最后一段），如 ``BlackedRaw``
+        date        完整日期串，如 ``26.09.23``
+        start/end   日期在名称中的下标区间
+    未找到返回 None。
+    """
+    if not name:
+        return None
+
+    # 先剥离发布站前缀，避免前缀里的数字干扰日期识别
+    consumed, rest = strip_publish_prefix(name)
+    offset = len(consumed)
+
+    m = _WESTERN_DATE_RE.search(rest)
+    if not m:
+        # 兜底：在全文里找
+        m = _WESTERN_DATE_RE.search(name)
+        offset = 0
+    if not m:
+        return None
+
+    start, end = offset + m.start(), offset + m.end()
+    before = name[:start]
+
+    # 厂牌 = 紧邻日期前、以点号分隔的最后一段
+    studio_match = re.search(r"([A-Za-z0-9]+)\.$", before)
+    studio = studio_match.group(1) if studio_match else ""
+
+    return {
+        "prefix": before,
+        "studio": studio,
+        "date": m.group(0),
+        "start": start,
+        "end": end,
+    }
+
+
+def insert_mark_after_western(name: str, mark: str) -> str:
+    """在欧美番号的日期后追加标记，其余部分不变。
+
+    例：``BlackedRaw.26.09.23.Delilah...mp4`` + ``-U``
+        => ``BlackedRaw.26.09.23-U.Delilah...mp4``
+
+    若无标记则原样返回；已存在该标记则幂等返回。
+    """
+    if not mark:
+        return name
+    info = find_western(name)
+    if not info:
+        return name
+
+    normalized = mark if mark.startswith("-") else "-" + mark
+    end = info["end"]
+    tail = name[end:]
+
+    if tail.startswith(normalized):
+        return name
+    return name[:end] + normalized + tail
+
+
+def match_studio(name: str, studios: list[str]) -> str | None:
+    """不分大小写地判断文件名是否含某个厂牌关键字。"""
+    return match_any_keyword(name, studios)

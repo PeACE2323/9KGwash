@@ -310,6 +310,145 @@ r = client.get("/api/deliver/status")
 d = r.get_json()
 check("status 返回 watcher", d["success"] is True and "watcher" in d)
 
+# ===========================================================================
+print("\n=== F. 欧美番号（厂牌.年.月.日）===")
+WEST_FILE = (
+    "BlackedRaw.26.09.23.Delilah.Dagger.And.Julia.James.Fresh.Faces."
+    "Get.Their.Pussies.Stretched.XXX.1080p.MP4-P2P[XC].mp4"
+)
+
+w = naming.find_western(WEST_FILE)
+check("识别欧美厂牌 BlackedRaw", w and w["studio"] == "BlackedRaw", w)
+check("识别日期 26.09.23", w and w["date"] == "26.09.23", w)
+check("4 位年份也支持", (naming.find_western("Tushy.2024.01.05.Title.mp4") or {}).get("date") == "2024.01.05")
+
+wmarked = naming.insert_mark_after_western(WEST_FILE, "-U")
+EXPECTED_W = WEST_FILE.replace("26.09.23", "26.09.23-U")
+check("欧美标记插在日期后", wmarked == EXPECTED_W, f"\n    got: {wmarked}\n    exp: {EXPECTED_W}")
+check("欧美标记幂等", naming.insert_mark_after_western(wmarked, "-U") == wmarked)
+check("欧美不加标记时原样返回", naming.insert_mark_after_western(WEST_FILE, "") == WEST_FILE)
+
+check("JAV 文件不误判为欧美", naming.find_western("DASS-787.mp4") is None)
+check("普通影片不误判为欧美", naming.find_western("Some.Movie.2024.1080p.mp4") is None)
+
+# ===========================================================================
+print("\n=== G. 投递引擎：欧美规则 + 兜底 ===")
+OUT_WEST = os.path.join(TMP, "out", "western")
+OUT_FALLBACK = os.path.join(TMP, "out", "fallback")
+for d in (OUT_WEST, OUT_FALLBACK):
+    os.makedirs(d, exist_ok=True)
+
+WEST_RULES = [
+    {
+        "id": "w1", "name": "欧美厂牌", "kind": "western", "enabled": True,
+        "keywords": ["blackedraw", "tushy", "vixen"], "mark": "-U",
+        "target_dir": OUT_WEST, "action": "move",
+    },
+    {
+        "id": "f1", "name": "兜底", "kind": "fallback", "enabled": True,
+        "keywords": [], "mark": "", "target_dir": OUT_FALLBACK, "action": "move",
+    },
+]
+
+# --- G1: 厂牌命中 -> 投递到欧美目录 ---
+clean(SCAN, OUT_WEST, OUT_FALLBACK)
+touch(os.path.join(SCAN, WEST_FILE), 2 * MB)
+stats = deliver.run_deliver(base_cfg(RULES=WEST_RULES, MIN_SIZE_MB=1), dry_run=False)
+west_files = os.listdir(OUT_WEST) if os.path.isdir(OUT_WEST) else []
+check("欧美文件投递到 western 目录", west_files == [EXPECTED_W], west_files)
+check("欧美文件未进兜底目录", os.listdir(OUT_FALLBACK) == [], os.listdir(OUT_FALLBACK))
+
+# --- G2: 厂牌不匹配 -> 落兜底 ---
+clean(SCAN, OUT_WEST, OUT_FALLBACK)
+OTHER_WEST = "Brazzers.26.01.02.Some.Title.XXX.1080p.mp4"
+touch(os.path.join(SCAN, OTHER_WEST), 2 * MB)
+stats = deliver.run_deliver(base_cfg(RULES=WEST_RULES, MIN_SIZE_MB=1), dry_run=False)
+check("未命中厂牌的文件进兜底目录", os.listdir(OUT_FALLBACK) == [OTHER_WEST], os.listdir(OUT_FALLBACK))
+check("兜底不改名", os.listdir(OUT_FALLBACK) == [OTHER_WEST])
+
+# --- G3: 兜底只处理媒体文件且过阈值 ---
+clean(SCAN, OUT_WEST, OUT_FALLBACK)
+touch(os.path.join(SCAN, "no_kw_video.mp4"), 2 * MB)      # 媒体 + 过阈值 -> 兜底
+touch(os.path.join(SCAN, "note.txt"), 2 * MB)             # 非媒体 -> 不兜底（体积够）
+stats = deliver.run_deliver(base_cfg(RULES=WEST_RULES, MIN_SIZE_MB=1), dry_run=False)
+check("兜底转走媒体文件", os.path.exists(os.path.join(OUT_FALLBACK, "no_kw_video.mp4")))
+check("兜底不动非媒体文件", os.path.exists(os.path.join(SCAN, "note.txt")))
+check("兜底不动小文件（已被删除）", not os.path.exists(os.path.join(SCAN, "small.mp4")))
+
+# --- G4: 关键字规则优先于兜底（顺序决定） ---
+clean(SCAN, OUT_WEST, OUT_FALLBACK, OUT_JAV)
+jav_first = [
+    dict(RULES[0], keywords=["restored"], target_dir=OUT_JAV),   # restored
+    dict(WEST_RULES[1]),                                          # 兜底在后
+]
+touch(os.path.join(SCAN, "ABC-123-restored.mp4"), 2 * MB)
+deliver.run_deliver(base_cfg(RULES=jav_first, MIN_SIZE_MB=1), dry_run=False)
+check("命中关键字时优先走关键字规则（不进兜底）",
+      os.path.exists(os.path.join(OUT_JAV, "ABC-123-U-restored.mp4"))
+      and os.listdir(OUT_FALLBACK) == [],
+      {"jav": os.listdir(OUT_JAV), "fb": os.listdir(OUT_FALLBACK)})
+
+# --- G5: 顺序颠倒 -> 结论应该一致（关键字规则仍优先于 fallback）---
+clean(SCAN, OUT_WEST, OUT_FALLBACK, OUT_JAV)
+fallback_first = [dict(WEST_RULES[1]), dict(RULES[0], keywords=["restored"], target_dir=OUT_JAV)]
+touch(os.path.join(SCAN, "DEF-456-restored.mp4"), 2 * MB)
+deliver.run_deliver(base_cfg(RULES=fallback_first, MIN_SIZE_MB=1), dry_run=False)
+check("兜底排在前面也不会抢占关键字命中",
+      os.path.exists(os.path.join(OUT_JAV, "DEF-456-U-restored.mp4")),
+      {"jav": os.listdir(OUT_JAV), "fb": os.listdir(OUT_FALLBACK)})
+
+# --- G6: 两条关键字规则顺序不同 -> 结果不同（验证「顺序在上先执行」）---
+clean(SCAN, OUT_JAV, OUT_WEST, OUT_FALLBACK)
+BOTH = "BlackedRaw.26.09.23.restored.Title.mp4"   # 同时命中 restored 与 blackedraw
+r_west_first = [
+    dict(WEST_RULES[0]),
+    dict(RULES[0], keywords=["restored"], target_dir=OUT_JAV),
+]
+touch(os.path.join(SCAN, BOTH), 2 * MB)
+deliver.run_deliver(base_cfg(RULES=r_west_first, MIN_SIZE_MB=1), dry_run=False)
+check("顺序：欧美规则在前 -> 投到欧美目录",
+      os.path.exists(os.path.join(OUT_WEST, "BlackedRaw.26.09.23-U.restored.Title.mp4")),
+      {"west": os.listdir(OUT_WEST), "jav": os.listdir(OUT_JAV)})
+
+clean(SCAN, OUT_JAV, OUT_WEST, OUT_FALLBACK)
+r_jav_first = [
+    dict(RULES[0], keywords=["restored"], target_dir=OUT_JAV),
+    dict(WEST_RULES[0]),
+]
+touch(os.path.join(SCAN, BOTH), 2 * MB)
+deliver.run_deliver(base_cfg(RULES=r_jav_first, MIN_SIZE_MB=1), dry_run=False)
+# 关键行为：JAV 规则虽排在前面且命中关键字，但该文件无日本番号 -> 不适用，
+# 应当继续尝试下一条（欧美规则）而不是丢弃，最终投到欧美目录
+check("JAV 规则不适用时继续尝试下一条（投到欧美目录）",
+      os.path.exists(os.path.join(OUT_WEST, "BlackedRaw.26.09.23-U.restored.Title.mp4")),
+      {"west": os.listdir(OUT_WEST), "jav": os.listdir(OUT_JAV)})
+check("JAV 规则未误收无番号文件", os.listdir(OUT_JAV) == [], os.listdir(OUT_JAV))
+
+# --- G7: 不填标记则不改名 ---
+clean(SCAN, OUT_WEST, OUT_FALLBACK)
+no_mark_rules = [dict(WEST_RULES[0], mark="")]
+touch(os.path.join(SCAN, WEST_FILE), 2 * MB)
+deliver.run_deliver(base_cfg(RULES=no_mark_rules, MIN_SIZE_MB=1), dry_run=False)
+check("欧美规则不填标记时保持原名", WEST_FILE in os.listdir(OUT_WEST), os.listdir(OUT_WEST))
+
+# --- G8: 禁用兜底规则 -> 未命中时保留原处 ---
+clean(SCAN, OUT_WEST, OUT_FALLBACK)
+disabled_fb = [dict(WEST_RULES[0]), dict(WEST_RULES[1], enabled=False)]
+touch(os.path.join(SCAN, "orphan.mp4"), 2 * MB)
+deliver.run_deliver(base_cfg(RULES=disabled_fb, MIN_SIZE_MB=1), dry_run=False)
+check("兜底被禁用时不转走", os.path.exists(os.path.join(SCAN, "orphan.mp4")))
+
+# --- G9: 预览接口支持 rules 与欧美类型 ---
+r = client.post("/api/deliver/preview", json={"files": [WEST_FILE], "rules": WEST_RULES})
+d = r.get_json()
+check("预览接口识别欧美", d["results"][0]["western_studio"] == "BlackedRaw", d["results"][0])
+check("预览输出日期后带标记", d["results"][0]["output"] == EXPECTED_W, d["results"][0]["output"])
+check("预览标记 rule_kind=western", d["results"][0]["rule_kind"] == "western")
+
+r = client.post("/api/deliver/preview", json={"files": ["plain.mp4"], "rules": WEST_RULES})
+d = r.get_json()
+check("预览未命中标记 fallback=True", d["results"][0]["fallback"] is True, d["results"][0])
+
 print("\n" + "=" * 50)
 print(f"结果: {PASS} 通过, {FAIL} 失败")
 print("=" * 50)

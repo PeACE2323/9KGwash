@@ -141,28 +141,67 @@ def browse():
 
 @bp.route("/preview", methods=["POST"])
 def preview():
-    """预览命名效果：给一批文件名 + 关键字 + 标记，返回改名结果。"""
+    """预览命名效果：给一批文件名 + 规则，返回每条的命中与改名结果。"""
     data = request.get_json(silent=True) or {}
     files = data.get("files") or []
-    keywords = data.get("keywords") or []
-    mark = data.get("mark") or ""
 
-    if isinstance(keywords, str):
-        keywords = [k.strip() for k in keywords.replace("，", ",").split(",") if k.strip()]
+    # 支持两种入参：直接给 rules（推荐），或给 keywords + mark 的单规则简写
+    if data.get("rules"):
+        rules = deliver.normalize_deliver_config({"RULES": data["rules"]})["RULES"]
+    else:
+        keywords = data.get("keywords") or []
+        if isinstance(keywords, str):
+            keywords = [k.strip() for k in keywords.replace("，", ",").split(",") if k.strip()]
+        rules = deliver.normalize_deliver_config(
+            {"RULES": [{"kind": data.get("kind", "jav"), "keywords": keywords,
+                        "mark": data.get("mark") or "", "target_dir": "/x"}]}
+        )["RULES"]
 
     results = []
     for name in files:
         name = str(name)
-        info = naming.find_fanhao(name)
-        hit = naming.match_any_keyword(name, keywords)
+        rule, kw = deliver.classify_file(name, rules)
+        fallback = False
+        if not rule:
+            rule = deliver.find_fallback_rule(rules)
+            fallback = bool(rule)
+        if not rule:
+            rule = rules[0] if rules else None
+
+        kind = (rule or {}).get("kind", "jav")
+        mark = (rule or {}).get("mark", "")
+
+        jav_info = naming.find_fanhao(name)
+        west_info = naming.find_western(name)
+
+        output = name
+        reason = ""
+        if not rule:
+            reason = "没有可用规则"
+        elif kind == "jav":
+            if jav_info and mark:
+                output = naming.insert_mark_after_fanhao(name, mark)
+            elif not jav_info:
+                reason = "不含日本番号，实际执行时会被跳过"
+        elif kind == "western":
+            if west_info and mark:
+                output = naming.insert_mark_after_western(name, mark)
+            elif not west_info:
+                reason = "不含「年.月.日」，实际执行时会被跳过"
+
         results.append(
             {
                 "input": name,
-                "fanhao": info["fanhao"] if info else None,
-                "has_leading_digits": info["has_leading_digits"] if info else False,
-                "matched_keyword": hit,
+                "matched_rule": (rule or {}).get("name"),
+                "rule_kind": kind,
+                "fallback": fallback,
+                "matched_keyword": kw,
                 "is_video": deliver.is_video(name),
-                "output": naming.insert_mark_after_fanhao(name, mark) if (hit and mark) else name,
+                "fanhao": jav_info["fanhao"] if jav_info else None,
+                "western_studio": west_info["studio"] if west_info else None,
+                "western_date": west_info["date"] if west_info else None,
+                "output": output,
+                "reason": reason,
             }
         )
     return jsonify({"success": True, "results": results})

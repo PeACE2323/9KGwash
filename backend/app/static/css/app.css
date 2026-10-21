@@ -900,3 +900,71 @@ select option { background: #121826; }
   .rule-body { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- 规则拖动排序 ---------- */
+.rule-grip {
+  flex: 0 0 auto;
+  cursor: grab;
+  color: var(--text-faint);
+  font-size: 15px;
+  letter-spacing: -1px;
+  padding: 0 2px;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+.rule-grip:hover { color: var(--pink); }
+.rule-item:active .rule-grip { cursor: grabbing; }
+
+.rule-order {
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: rgba(236, 72, 153, 0.16);
+  border: 1px solid rgba(236, 72, 153, 0.35);
+  color: var(--pink-soft);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.rule-item.is-dragging {
+  opacity: 0.45;
+  border-style: dashed;
+  border-color: var(--pink);
+  background: rgba(236, 72, 153, 0.08);
+}
+
+.rule-move { display: inline-flex; gap: 3px; flex: 0 0 auto; }
+.rule-move .btn { padding: 2px 6px; line-height: 1; }
+
+/* 兜底规则视觉区分 */
+.rule-item.is-fallback {
+  border-color: rgba(251, 191, 36, 0.42);
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.07), rgba(13, 18, 30, 0.85));
+}
+.rule-item.is-fallback .rule-order {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fde68a;
+}
+
+.rule-fallback-tip {
+  display: none;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px dashed rgba(251, 191, 36, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.rule-item.is-fallback .rule-fallback-tip { display: block; }
+/* 兜底规则不需要标记与关键字输入 */
+.rule-item.is-fallback .rule-mark-field { display: none; }
+
+@media (max-width: 640px) {
+  .rule-move { order: 3; }
+}

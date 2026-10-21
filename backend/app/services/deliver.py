@@ -62,9 +62,16 @@ def default_deliver_config() -> dict:
 
 
 def _normalize_rule(raw: dict, idx: int = 0) -> dict:
-    """把前端传来的规则规范化，保证字段完整、类型正确。"""
+    """把前端传来的规则规范化，保证字段完整、类型正确。
+
+    kind:
+        jav     命中后在 JAV 番号（厂牌-数字）后插标记，投递到目标目录
+        western 命中厂牌且含「年.月.日」时，在日期后插标记，投递到目标目录
+        other   命中后原样投递到目标目录，不改名
+        fallback 兜底：前面所有规则都没命中时执行（仅媒体文件且过体积阈值）
+    """
     kind = str(raw.get("kind", "jav")).lower()
-    if kind not in ("jav", "other"):
+    if kind not in ("jav", "western", "other", "fallback"):
         kind = "jav"
 
     keywords = raw.get("keywords", [])
@@ -211,14 +218,42 @@ def iter_files(root: str, recursive: bool):
 # 核心：处理单个文件
 # ---------------------------------------------------------------------------
 def classify_file(filename: str, rules: list[dict]) -> tuple[dict | None, str | None]:
-    """返回 (命中的规则, 命中的关键字)。按规则顺序匹配，先命中者优先。"""
+    """按规则顺序（从上到下）匹配，先命中且「适用」者生效。
+
+    返回 (命中的规则, 命中的关键字/厂牌)。
+    - jav / western / other：需要 keyword 命中；且 jav/western 还需文件名
+      能被对应类型解析（不含番号/日期的候选会视为「不适用」，继续尝试下一条规则）
+    - fallback：不参与关键字匹配，仅当以上全部未命中时兜底
+    """
     for rule in rules:
         if not rule.get("enabled", True):
             continue
+        kind = rule.get("kind")
+        if kind == "fallback":
+            continue
+
         kw = naming.match_any_keyword(filename, rule.get("keywords", []))
-        if kw:
-            return rule, kw
+        if not kw:
+            continue
+
+        # 类型适用性校验：命中了关键字但格式对不上，交给后续规则
+        if kind == "jav" and not naming.find_fanhao(filename):
+            logger.info(f"   [-] ↩️ [投递] 规则[{rule.get('name')}]命中关键词[{kw}]但无日本番号，改试下一条规则")
+            continue
+        if kind == "western" and not naming.find_western(filename):
+            logger.info(f"   [-] ↩️ [投递] 规则[{rule.get('name')}]命中厂牌[{kw}]但无欧美日期，改试下一条规则")
+            continue
+
+        return rule, kw
     return None, None
+
+
+def find_fallback_rule(rules: list[dict]) -> dict | None:
+    """返回第一条启用中的兜底规则。"""
+    for rule in rules:
+        if rule.get("enabled", True) and rule.get("kind") == "fallback":
+            return rule
+    return None
 
 
 def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
@@ -261,11 +296,20 @@ def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
         result["reason"] = "非媒体文件"
         return result
 
-    # ---- 3. 关键字匹配 ----
-    rule, kw = classify_file(filename, cfg.get("RULES", []))
+    # ---- 3. 按顺序匹配关键字规则 ----
+    rules = cfg.get("RULES", [])
+    rule, kw = classify_file(filename, rules)
+    fallback = False
+
+    # 兜底：所有关键字规则都没命中时，交给兜底规则
     if not rule:
-        result["reason"] = "未命中任何关键字规则"
-        return result
+        rule = find_fallback_rule(rules)
+        if rule:
+            fallback = True
+            result["reason"] = "未命中关键字，走兜底规则"
+        else:
+            result["reason"] = "未命中任何关键字规则"
+            return result
 
     target_root = rule.get("target_dir", "").strip()
     if not target_root:
@@ -275,20 +319,40 @@ def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
 
     new_name = filename
     final_dir = target_root
+    kind = rule.get("kind")
 
-    if rule["kind"] == "jav":
+    if kind == "jav":
         info = naming.find_fanhao(filename)
         if not info:
-            result["reason"] = f"命中关键词[{kw}]但文件名不含番号，不投递"
+            result["reason"] = f"命中关键词[{kw}]但文件名不含日本番号，不投递"
             logger.warning(f"   [-] ⚠️ [投递] {filename} 命中JAV规则但未识别到番号，跳过")
             return result
+        # 未填写标记则不改名
         if rule.get("mark"):
             new_name = naming.insert_mark_after_fanhao(filename, rule["mark"])
-        logger.info(f"   [-] 🏷️ [投递] 命中关键词[{kw}] 番号={info['fanhao']} 标记={rule.get('mark') or '无'}")
-    else:
+        logger.info(f"   [-] 🏷️ [投递] 命中JAV规则[{rule['name']}]关键词[{kw}] "
+                    f"番号={info['fanhao']} 标记={rule.get('mark') or '无'}")
+
+    elif kind == "western":
+        info = naming.find_western(filename)
+        if not info:
+            result["reason"] = f"命中厂牌[{kw}]但文件名不含「年.月.日」，不投递"
+            logger.warning(f"   [-] ⚠️ [投递] {filename} 命中欧美规则但未识别到日期，跳过")
+            return result
+        if rule.get("mark"):
+            new_name = naming.insert_mark_after_western(filename, rule["mark"])
+        logger.info(f"   [-] 🏷️ [投递] 命中欧美规则[{rule['name']}]厂牌[{kw}] "
+                    f"日期={info['date']} 标记={rule.get('mark') or '无'}")
+
+    elif kind == "fallback":
+        logger.info(f"   [-] 🏷️ [投递] 未命中任何关键字，执行兜底规则[{rule['name']}]")
+
+    else:  # other
         logger.info(f"   [-] 🏷️ [投递] 命中普通规则[{rule['name']}]关键词[{kw}]")
 
     result["new_name"] = new_name
+    result["rule"] = rule.get("name")
+    result["fallback"] = fallback
 
     # ---- 4. 执行投递 ----
     action = rule.get("action", "move")

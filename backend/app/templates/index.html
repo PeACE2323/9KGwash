@@ -225,12 +225,18 @@
             <div class="card-head">
               <h2>🏷️ 关键字投递规则</h2>
               <div class="head-tools">
-                <button class="btn btn-ghost btn-sm" id="deliver-add-rule">➕ 添加规则</button>
+                <button class="btn btn-ghost btn-sm" id="deliver-add-fallback">🎯 添加兜底</button>
+                <button class="btn btn-primary btn-sm" id="deliver-add-rule">➕ 添加规则</button>
               </div>
             </div>
             <p class="view-tip">
-              <strong>JAV 规则</strong>：命中关键字后，在番号后插入标记并投递到目标目录（如 <code>DASS-787</code> → <code>DASS-787-U</code>）。<br>
-              <strong>普通规则</strong>：命中关键字后原样投递到目标目录，不改名、不要求含番号。
+              <strong>规则从上到下依次匹配，先命中者生效</strong>（可拖动 ⠿ 或点 ▲▼ 调整顺序）。<br>
+              <strong>JAV 番号规则</strong>：命中关键字后在番号后插入标记，如 <code>DASS-787</code> → <code>DASS-787-U</code>。<br>
+              <strong>欧美番号规则</strong>：关键字填写厂牌（如 <code>blackedraw</code>），命中且含「年.月.日」时在日期后插入标记，
+              如 <code>BlackedRaw.26.09.23</code> → <code>BlackedRaw.26.09.23-U</code>。<br>
+              <strong>普通关键字规则</strong>：命中后原样投递，不改名。<br>
+              <strong>兜底规则</strong>：以上全部未命中时执行，仅处理通过体积阈值的媒体文件，原样投递。<br>
+              标记留空则<b>不插入标记</b>（JAV / 欧美规则均适用）。
             </p>
             <div id="rule-list" class="rule-list">
               <div class="empty-hint">还没有规则，点击右上角「添加规则」</div>
@@ -337,25 +343,33 @@
   <template id="rule-tpl">
     <div class="rule-item">
       <div class="rule-head">
+        <span class="rule-grip" title="按住拖动可调整执行顺序">⠿</span>
+        <span class="rule-order"></span>
         <input type="text" class="rule-name" placeholder="规则名称">
         <select class="rule-kind">
           <option value="jav">JAV 番号规则</option>
+          <option value="western">欧美番号规则</option>
           <option value="other">普通关键字规则</option>
+          <option value="fallback">兜底规则</option>
         </select>
         <select class="rule-action">
           <option value="move">移动</option>
           <option value="copy">复制</option>
         </select>
         <label class="rule-enabled"><input type="checkbox" class="rule-enabled-cb"> 启用</label>
+        <span class="rule-move">
+          <button type="button" class="btn btn-ghost btn-xs rule-up" title="上移">▲</button>
+          <button type="button" class="btn btn-ghost btn-xs rule-down" title="下移">▼</button>
+        </span>
         <button type="button" class="btn btn-ghost btn-xs rule-del">删除</button>
       </div>
       <div class="rule-body">
-        <label class="field">
-          <span>关键字（逗号分隔，不分大小写）</span>
+        <label class="field rule-kw-field">
+          <span class="rule-kw-label">关键字（逗号分隔，不分大小写）</span>
           <input type="text" class="rule-keywords" placeholder="restored, uncensored">
         </label>
         <label class="field rule-mark-field">
-          <span>番号后标记（如 -U）</span>
+          <span>标记（留空则不改名）</span>
           <input type="text" class="rule-mark" placeholder="-U">
         </label>
         <label class="field rule-target-field">
@@ -365,6 +379,9 @@
             <button type="button" class="btn btn-ghost btn-sm rule-browse">浏览</button>
           </div>
         </label>
+      </div>
+      <div class="rule-fallback-tip">
+        兜底规则：前面所有规则都未命中时执行。仅处理<strong>通过体积阈值的媒体文件</strong>，原样投递、不改名。
       </div>
     </div>
   </template>
