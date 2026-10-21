@@ -54,6 +54,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_mark_position
 
+      - name: 运行规则分组测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_rule_groups
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

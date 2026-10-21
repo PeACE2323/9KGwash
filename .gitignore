@@ -31,3 +31,9 @@ Thumbs.db
 # 截图工具产生的浏览器缓存
 *-shot-profile/
 
+
+# 无头浏览器截图产生的临时 profile
+gshot/
+9kgwash-cdp/
+9kgwash-shot-profile/
+

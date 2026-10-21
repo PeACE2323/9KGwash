@@ -224,26 +224,21 @@
             </p>
           </div>
 
-          <!-- 规则列表 -->
+          <!-- 规则分组列表 -->
           <div class="card">
             <div class="card-head">
-              <h2>🏷️ 关键字投递规则</h2>
+              <h2>🗂️ 投递规则组</h2>
               <div class="head-tools">
-                <button class="btn btn-ghost btn-sm" id="deliver-add-fallback">🎯 添加兜底</button>
-                <button class="btn btn-primary btn-sm" id="deliver-add-rule">➕ 添加规则</button>
+                <button class="btn btn-ghost btn-sm" id="deliver-add-fallback">🎯 添加兜底组</button>
+                <button class="btn btn-primary btn-sm" id="deliver-add-group">➕ 添加规则组</button>
               </div>
             </div>
             <p class="view-tip">
-              <strong>规则从上到下依次匹配，先命中者生效</strong>（可拖动 ⠿ 或点 ▲▼ 调整顺序）。<br>
-              <strong>JAV 番号规则</strong>：命中关键字后在番号后插入标记，如 <code>DASS-787</code> → <code>DASS-787-U</code>。<br>
-              <strong>欧美番号规则</strong>：关键字填写厂牌（如 <code>blackedraw</code>），命中且含「年.月.日」时在日期后插入标记，
-              如 <code>BlackedRaw.26.09.23</code> → <code>BlackedRaw.26.09.23-U</code>。<br>
-              <strong>普通关键字规则</strong>：命中后原样投递，不改名。<br>
-              <strong>兜底规则</strong>：以上全部未命中时执行，仅处理通过体积阈值的媒体文件，原样投递。<br>
-              标记留空则<b>不插入标记</b>（JAV / 欧美规则均适用）。
+              <strong>优先级：先看组的顺序，再看组内子规则的顺序，命中即停。</strong>
+              拖动组头 ⠿ 调整组的先后，组内子规则用 ▲▼ 调整。
             </p>
-            <div id="rule-list" class="rule-list">
-              <div class="empty-hint">还没有规则，点击右上角「添加规则」</div>
+            <div id="group-list" class="group-list">
+              <div class="empty-hint">还没有规则组，点击右上角「添加规则组」</div>
             </div>
           </div>
         </section>
@@ -349,41 +344,32 @@
     </div>
   </div>
 
-  <!-- 规则卡片模板（紧凑可折叠：默认一行摘要，点击展开编辑） -->
-  <template id="rule-tpl">
-    <div class="rule-item">
-      <!-- 折叠态：宽屏单行 / 窄屏两行 -->
-      <div class="rule-summary">
-        <div class="rule-row rule-row-top">
-          <span class="rule-grip" draggable="true" title="按住此把手拖动可调整执行顺序">⠿</span>
-          <span class="rule-order"></span>
-          <span class="rule-kind-badge"></span>
-          <span class="rule-name-text"></span>
-          <span class="rule-spacer"></span>
-          <span class="rule-state"></span>
-          <span class="rule-move">
-            <button type="button" class="btn btn-ghost btn-xs rule-up" title="上移">▲</button>
-            <button type="button" class="btn btn-ghost btn-xs rule-down" title="下移">▼</button>
-          </span>
-          <button type="button" class="btn btn-ghost btn-xs rule-del" title="删除此规则">✕</button>
-          <button type="button" class="rule-toggle" title="展开/收起">▾</button>
-        </div>
-        <div class="rule-row rule-row-bottom">
-          <span class="rule-kw-preview"></span>
-          <span class="rule-flow" title="命中后如何处理"></span>
-        </div>
+  <!-- 规则组卡片模板 -->
+  <template id="group-tpl">
+    <div class="group-item">
+      <!-- 组头：共享配置（类型/目标目录/动作/启用） -->
+      <div class="group-head">
+        <span class="group-grip" draggable="true" title="按住拖动可调整组的优先级">⠿</span>
+        <span class="group-order"></span>
+        <span class="rule-kind-badge"></span>
+        <input type="text" class="group-name" placeholder="规则组名称">
+        <span class="group-count"></span>
+        <span class="rule-spacer"></span>
+        <span class="rule-state"></span>
+        <span class="rule-move">
+          <button type="button" class="btn btn-ghost btn-xs group-up" title="上移此组">▲</button>
+          <button type="button" class="btn btn-ghost btn-xs group-down" title="下移此组">▼</button>
+        </span>
+        <button type="button" class="btn btn-ghost btn-xs group-del" title="删除此组">✕</button>
+        <button type="button" class="group-toggle" title="展开/收起">▾</button>
       </div>
 
-      <!-- 展开态：编辑表单 -->
-      <div class="rule-body">
-        <div class="rule-grid">
+      <!-- 组体：共享设置 + 子规则列表 -->
+      <div class="group-body">
+        <div class="rule-grid group-settings">
           <label class="field">
-            <span>规则名称</span>
-            <input type="text" class="rule-name" placeholder="如：还原版投递">
-          </label>
-          <label class="field">
-            <span>规则类型</span>
-            <select class="rule-kind">
+            <span>规则类型（组内共享）</span>
+            <select class="group-kind">
               <option value="jav">JAV 番号规则</option>
               <option value="western">欧美番号规则</option>
               <option value="other">普通关键字规则</option>
@@ -391,53 +377,55 @@
             </select>
           </label>
           <label class="field">
-            <span>投递方式</span>
-            <select class="rule-action">
+            <span>投递方式（组内共享）</span>
+            <select class="group-action">
               <option value="move">移动</option>
               <option value="copy">复制</option>
             </select>
           </label>
+          <label class="field group-target-field">
+            <span>目标目录（组内共享）</span>
+            <div class="input-with-btn">
+              <input type="text" class="group-target" placeholder="/media/115open/9KG/交付/还原">
+              <button type="button" class="btn btn-ghost btn-sm group-browse">浏览</button>
+            </div>
+          </label>
           <label class="skill-check">
-            <input type="checkbox" class="rule-enabled-cb">
-            <span>启用此规则</span>
+            <input type="checkbox" class="group-enabled-cb">
+            <span>启用此组</span>
           </label>
         </div>
 
-        <label class="field rule-kw-field">
-          <span class="rule-kw-label">关键字（逗号分隔，不分大小写）</span>
-          <textarea class="rule-keywords" rows="1" placeholder="restored, uncensored"></textarea>
-        </label>
-
-        <div class="rule-grid rule-mark-row">
-          <label class="field rule-mark-field">
-            <span>标记</span>
-            <input type="text" class="rule-mark" placeholder="-U">
-          </label>
-          <label class="field rule-pos-field">
-            <span>标记位置</span>
-            <select class="rule-mark-pos">
-              <option value="after">番号后（DASS-787-U）</option>
-              <option value="before">番号前（U-DASS-787）</option>
-            </select>
-          </label>
+        <div class="group-fallback-tip">
+          兜底组：前面所有组都未命中时执行。仅处理<strong>通过体积阈值的媒体文件</strong>，原样投递、不改名。
+        </div>
+        <div class="group-western-tip">
+          欧美组：关键字填<strong>厂牌</strong>（如 blackedraw），需同时命中厂牌且含「年.月.日」才会投递。此类型<strong>不提供标记</strong>。
         </div>
 
-        <label class="field rule-target-field">
-          <span>目标目录（容器内路径）</span>
-          <div class="input-with-btn">
-            <input type="text" class="rule-target" placeholder="/media/115open/9KG/交付/还原">
-            <button type="button" class="btn btn-ghost btn-sm rule-browse">浏览</button>
-          </div>
-        </label>
-
-        <div class="rule-fallback-tip">
-          兜底规则：前面所有规则都未命中时执行。仅处理<strong>通过体积阈值的媒体文件</strong>，原样投递、不改名。
-        </div>
-        <div class="rule-western-tip">
-          欧美规则：关键字填<strong>厂牌</strong>（如 blackedraw），需同时命中厂牌且含「年.月.日」才会投递。
-          <strong>此类型不提供标记功能</strong>，文件将原样投递。
-        </div>
+        <!-- 子规则列表 -->
+        <div class="child-list"></div>
+        <button type="button" class="btn btn-ghost btn-sm child-add">➕ 添加子规则</button>
       </div>
+    </div>
+  </template>
+
+  <!-- 组内子规则模板 -->
+  <template id="child-tpl">
+    <div class="child-item">
+      <span class="child-order"></span>
+      <input type="text" class="child-keywords" placeholder="关键字，逗号分隔（restored, LTX）">
+      <input type="text" class="child-mark child-mark-val" placeholder="标记，如 -U（可留空）">
+      <select class="child-mark-pos" title="标记位置">
+        <option value="after">番号后</option>
+        <option value="before">番号前</option>
+      </select>
+      <label class="child-enabled"><input type="checkbox" class="child-enabled-cb" title="启用此子规则"></label>
+      <span class="child-move">
+        <button type="button" class="btn btn-ghost btn-xs child-up" title="上移">▲</button>
+        <button type="button" class="btn btn-ghost btn-xs child-down" title="下移">▼</button>
+      </span>
+      <button type="button" class="btn btn-ghost btn-xs child-del" title="删除子规则">✕</button>
     </div>
   </template>
 

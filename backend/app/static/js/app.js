@@ -163,341 +163,296 @@
     el.className = "status-msg" + (cls ? " " + cls : "");
   }
 
-  /** 根据规则类型切换字段显示与提示文案 */
-  function applyRuleKind(node) {
-    const kind = node.querySelector(".rule-kind").value;
-    const kwInput = node.querySelector(".rule-keywords");
-    const kwLabel = node.querySelector(".rule-kw-label");
-    const tip = node.querySelector(".rule-fallback-tip");
-    const westTip = node.querySelector(".rule-western-tip");
+  /* ---------- 规则组渲染 ---------- */
+  const KIND_BADGE = {
+    jav: ["JAV", "badge-jav"],
+    western: ["欧美", "badge-western"],
+    other: ["普通", "badge-other"],
+    fallback: ["兜底", "badge-fallback"],
+  };
 
-    node.classList.toggle("is-other", kind === "other");
-    node.classList.toggle("is-fallback", kind === "fallback");
-    node.classList.toggle("is-western", kind === "western");
-
-    if (kind === "western") {
-      kwLabel.textContent = "厂牌列表（逗号分隔，不分大小写）";
-      kwInput.placeholder = "blackedraw, tushy, vixen";
-    } else if (kind === "fallback") {
-      kwLabel.textContent = "关键字（兜底规则不使用，可留空）";
-      kwInput.placeholder = "—";
-    } else {
-      kwLabel.textContent = "关键字（逗号分隔，不分大小写）";
-      kwInput.placeholder = "restored, uncensored";
-    }
-
-    if (tip) tip.style.display = kind === "fallback" ? "" : "none";
-    if (westTip) westTip.style.display = kind === "western" ? "" : "none";
-
-    // 欧美规则与兜底规则不提供标记功能
-    const markRow = node.querySelector(".rule-mark-row");
-    if (markRow) markRow.style.display = (kind === "western" || kind === "fallback") ? "none" : "";
-
-    // 标记位置文案随类型变化
-    const posSel = node.querySelector(".rule-mark-pos");
-    if (posSel) {
-      const isOther = kind === "other";
-      posSel.options[0].textContent = isOther ? "文件名后（xxx_restored）" : "番号后（DASS-787-U）";
-      posSel.options[1].textContent = isOther ? "文件名前（U-xxx）" : "番号前（U-DASS-787）";
-    }
-  }
-
-  /** 折叠态下的一行摘要 */
-  function updateRuleSummary(node) {
-    const kind = node.querySelector(".rule-kind").value;
-    const name = node.querySelector(".rule-name").value.trim() || "未命名规则";
-    const kws = (node.querySelector(".rule-keywords").value || "")
-      .split(/[,，\n]/)
+  function splitKeywords(raw) {
+    return (raw || "")
+      .replace(/，/g, ",")
+      .split(/[,\n]/)
       .map((s) => s.trim())
       .filter(Boolean);
-    const action = node.querySelector(".rule-action").value;
-    const enabled = node.querySelector(".rule-enabled-cb").checked;
-    const target = node.querySelector(".rule-target").value.trim();
-    const mark = node.querySelector(".rule-mark").value.trim();
-    const pos = node.querySelector(".rule-mark-pos").value;
+  }
 
-    const KIND_BADGE = {
-      jav: ["JAV", "badge-jav"],
-      western: ["欧美", "badge-western"],
-      other: ["普通", "badge-other"],
-      fallback: ["兜底", "badge-fallback"],
-    };
+  /** 组头徽标 / 状态 / 子规则计数 随配置刷新 */
+  function refreshGroupHead(node) {
+    const kind = node.querySelector(".group-kind").value;
+    const enabled = node.querySelector(".group-enabled-cb").checked;
+    const childCount = node.querySelectorAll(".child-item").length;
+    const name = node.querySelector(".group-name").value.trim();
+
     const [badgeText, badgeCls] = KIND_BADGE[kind] || KIND_BADGE.jav;
     const badgeEl = node.querySelector(".rule-kind-badge");
     badgeEl.textContent = badgeText;
     badgeEl.className = "rule-kind-badge " + badgeCls;
 
-    node.querySelector(".rule-name-text").textContent = name;
-    node.querySelector(".rule-name-text").title = name;
-
-    const kwEl = node.querySelector(".rule-kw-preview");
-    if (kind === "fallback") {
-      kwEl.textContent = "所有未命中的视频";
-      kwEl.title = "";
-    } else if (kws.length) {
-      kwEl.textContent = kws.length > 3
-        ? kws.slice(0, 3).join(", ") + ` +${kws.length - 3}`
-        : kws.join(", ");
-      kwEl.title = kws.join(", ");
-    } else {
-      kwEl.textContent = "（未填关键字）";
-      kwEl.title = "";
-    }
-
-    // 处理流程：关键字 → [标记] → 目录
-    const parts = [];
-    if (mark && kind !== "western" && kind !== "fallback") {
-      parts.push(pos === "before" ? `${mark.trim()||"-"}…前` : `…${mark}`);
-    }
-    parts.push(action === "copy" ? "复制" : "移动");
-    parts.push(target ? target.split(/[\\/]/).filter(Boolean).pop() : "未设目录");
-    const flowEl = node.querySelector(".rule-flow");
-    flowEl.textContent = "→ " + parts.join(" → ");
-    flowEl.title = target || "";
+    node.querySelector(".group-count").textContent = `${childCount} 条子规则`;
 
     const stateEl = node.querySelector(".rule-state");
     stateEl.textContent = enabled ? "启用" : "已停用";
     stateEl.className = "rule-state" + (enabled ? " on" : " off");
+
     node.classList.toggle("is-disabled", !enabled);
+    node.classList.toggle("is-fallback", kind === "fallback");
+    node.classList.toggle("is-western", kind === "western");
+    // 欧美/兜底组不提供标记，隐藏子规则里的标记控件
+    node.classList.toggle("no-mark", kind === "western" || kind === "fallback");
+    node.querySelector(".group-name").title = name;
   }
 
-  /** 刷新每条规则的序号显示 */
-  function refreshRuleOrder() {
-    document.querySelectorAll("#rule-list .rule-item").forEach((node, idx) => {
-      const badge = node.querySelector(".rule-order");
+  /** 刷新组的序号 */
+  function refreshGroupOrder() {
+    document.querySelectorAll("#group-list .group-item").forEach((node, idx) => {
+      const badge = node.querySelector(".group-order");
       if (badge) badge.textContent = idx + 1;
     });
   }
 
-  /**
-   * 让 textarea 高度随内容自动增长（关键字换行用）。
-   * 先归零再按 scrollHeight 撑开，内容少时保持单行高度。
-   */
-  function autoGrow(el) {
-    if (!el || el.tagName !== "TEXTAREA") return;
-    el.style.height = "auto";
-    // +2 补偿边框，避免出现内部滚动条
-    el.style.height = Math.max(el.scrollHeight + 2, 38) + "px";
+  /** 刷新组内子规则序号 */
+  function refreshChildOrder(groupNode) {
+    groupNode.querySelectorAll(".child-item").forEach((node, idx) => {
+      const badge = node.querySelector(".child-order");
+      if (badge) badge.textContent = idx + 1;
+    });
+    refreshGroupHead(groupNode);
   }
 
-  /** 批量重算所有关键字输入框高度（渲染后/窗口缩放时） */
-  function autoGrowAll() {
-    document.querySelectorAll("#rule-list .rule-keywords").forEach(autoGrow);
-  }
+  /** 渲染单条子规则 */
+  function renderChild(groupNode, child) {
+    const tpl = $("child-tpl");
+    const node = tpl.content.firstElementChild.cloneNode(true);
+    node.dataset.id = child.id || "";
+    node.querySelector(".child-keywords").value = (child.keywords || []).join(", ");
+    node.querySelector(".child-mark-val").value = child.mark || "";
+    node.querySelector(".child-mark-pos").value = child.mark_position || "after";
+    node.querySelector(".child-enabled-cb").checked = child.enabled !== false;
 
-  function renderRules(rules) {
-    const list = $("rule-list");
-    const tpl = $("rule-tpl");
-    list.innerHTML = "";
+    if (child.enabled === false) node.classList.add("is-disabled");
 
-    if (!rules || !rules.length) {
-      list.innerHTML = '<div class="empty-hint">还没有规则，点击右上角「添加规则」</div>';
-      return;
-    }
-
-    rules.forEach((rule, idx) => {
-      const node = tpl.content.firstElementChild.cloneNode(true);
-      node.dataset.idx = String(idx);
-      node.dataset.id = rule.id || "";
-      // 注意：卡片本身不可拖动，只有 ⠿ 把手可拖，
-      // 否则在输入框内按住鼠标会变成拖动整条规则，无法选中文本。
-
-      node.querySelector(".rule-name").value = rule.name || "";
-      node.querySelector(".rule-kind").value = rule.kind || "jav";
-      node.querySelector(".rule-action").value = rule.action || "move";
-      node.querySelector(".rule-enabled-cb").checked = rule.enabled !== false;
-      node.querySelector(".rule-keywords").value = (rule.keywords || []).join(", ");
-      node.querySelector(".rule-mark").value = rule.mark || "";
-      node.querySelector(".rule-mark-pos").value = rule.mark_position || "after";
-      node.querySelector(".rule-target").value = rule.target_dir || "";
-
-      // 关键字过多时自动换行撑高（替代单行 input）
-      const kwEl = node.querySelector(".rule-keywords");
-      kwEl.addEventListener("input", () => {
-        autoGrow(kwEl);
-        updateRuleSummary(node);
-      });
-
-      applyRuleKind(node);
-      updateRuleSummary(node);
-
-      // 折叠/展开：默认折叠，保持列表紧凑
-      if (rule._expanded) node.classList.add("is-expanded");
-      const toggleExpand = () => {
-        const expanded = node.classList.toggle("is-expanded");
-        rule._expanded = expanded;
-        if (expanded) {
-          requestAnimationFrame(() => autoGrow(node.querySelector(".rule-keywords")));
-        }
-      };
-      node.querySelector(".rule-toggle").addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleExpand();
-      });
-      // 点击摘要行空白处也能展开（但不干扰按钮与拖动把手）
-      node.querySelector(".rule-summary").addEventListener("click", (e) => {
-        if (e.target.closest(".rule-grip, .rule-move, .rule-del, .rule-toggle")) return;
-        toggleExpand();
-      });
-
-      // 任意编辑动作都实时刷新摘要
-      const refresh = () => updateRuleSummary(node);
-      node.querySelector(".rule-name").addEventListener("input", refresh);
-      node.querySelector(".rule-target").addEventListener("input", refresh);
-      node.querySelector(".rule-mark").addEventListener("input", refresh);
-      node.querySelector(".rule-mark-pos").addEventListener("change", refresh);
-      node.querySelector(".rule-action").addEventListener("change", refresh);
-
-      node.querySelector(".rule-kind").addEventListener("change", () => {
-        applyRuleKind(node);
-        updateRuleSummary(node);
-        deliverMsg("规则类型已修改，记得保存", "busy");
-      });
-      node.querySelector(".rule-enabled-cb").addEventListener("change", (e) => {
-        node.classList.toggle("is-disabled", !e.target.checked);
-        updateRuleSummary(node);
-      });
-      node.querySelector(".rule-del").addEventListener("click", async () => {
-        const ok = await confirmDialog(
-          "删除规则",
-          `确定删除规则「${node.querySelector(".rule-name").value.trim() || "未命名"}」吗？`,
-          "删除"
-        );
-        if (!ok) return;
-        node.remove();
-        if (!$("rule-list").children.length) {
-          $("rule-list").innerHTML = '<div class="empty-hint">还没有规则，点击右上角「添加规则」</div>';
-        } else {
-          refreshRuleOrder();
-        }
-        deliverMsg("已移除规则，记得保存", "busy");
-      });
-      node.querySelector(".rule-browse").addEventListener("click", () => {
-        browserTargetId = node.querySelector(".rule-target");
-        $("browser").hidden = false;
-        loadBrowser(node.querySelector(".rule-target").value || "/");
-      });
-
-      // 触屏/键盘备选：上下移动
-      node.querySelector(".rule-up").addEventListener("click", () => moveRule(node, -1));
-      node.querySelector(".rule-down").addEventListener("click", () => moveRule(node, 1));
-
-      list.appendChild(node);
+    node.querySelector(".child-up").addEventListener("click", () => moveChild(node, -1));
+    node.querySelector(".child-down").addEventListener("click", () => moveChild(node, 1));
+    node.querySelector(".child-del").addEventListener("click", () => {
+      const list = node.parentElement;
+      node.remove();
+      if (list && list.querySelectorAll(".child-item").length === 0) {
+        // 留一条空白子规则，避免组内无可编辑行
+        renderChild(groupNode, {});
+      }
+      refreshChildOrder(groupNode);
+      deliverMsg("子规则已移除，记得保存", "busy");
+    });
+    node.querySelector(".child-enabled-cb").addEventListener("change", (e) => {
+      node.classList.toggle("is-disabled", !e.target.checked);
+    });
+    node.querySelector(".child-keywords").addEventListener("input", () => {
+      deliverMsg("", "");
     });
 
-    refreshRuleOrder();
-    enableDragSort();
-    // 渲染后（含从配置回填的长关键字列表）立即计算一次高度
-    requestAnimationFrame(autoGrowAll);
+    groupNode.querySelector(".child-list").appendChild(node);
+    return node;
   }
 
-  /* ---------- 拖动排序（仅 ⠿ 把手可拖，输入框内可正常选字） ---------- */
-  let dragNode = null;
+  function moveChild(node, dir) {
+    const sib = dir < 0 ? node.previousElementSibling : node.nextElementSibling;
+    if (!sib) return;
+    if (dir < 0) sib.before(node);
+    else sib.after(node);
+    refreshChildOrder(node.closest(".group-item"));
+    deliverMsg("组内顺序已调整，记得保存", "busy");
+  }
 
-  function enableDragSort() {
-    const list = $("rule-list");
+  /** 渲染一个规则组 */
+  function renderGroup(group) {
+    const tpl = $("group-tpl");
+    const node = tpl.content.firstElementChild.cloneNode(true);
+    node.dataset.id = group.id || "";
+
+    node.querySelector(".group-name").value = group.name || "";
+    node.querySelector(".group-kind").value = group.kind || "jav";
+    node.querySelector(".group-action").value = group.action || "move";
+    node.querySelector(".group-enabled-cb").checked = group.enabled !== false;
+    node.querySelector(".group-target").value = group.target_dir || "";
+
+    // 子规则
+    const children = (group.children && group.children.length) ? group.children : [{}];
+    children.forEach((c) => renderChild(node, c));
+
+    // 展开状态：默认折叠；新增组自动展开
+    if (group._expanded) node.classList.add("is-expanded");
+
+    const toggleExpand = () => {
+      const expanded = node.classList.toggle("is-expanded");
+      group._expanded = expanded;
+    };
+    node.querySelector(".group-toggle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleExpand();
+    });
+    node.querySelector(".group-head").addEventListener("click", (e) => {
+      if (e.target.closest(".group-grip, .rule-move, .group-del, .group-toggle, .group-name")) return;
+      toggleExpand();
+    });
+
+    // 组头编辑联动
+    const onHeadChange = () => {
+      refreshGroupHead(node);
+      deliverMsg("已修改，记得保存", "busy");
+    };
+    node.querySelector(".group-kind").addEventListener("change", onHeadChange);
+    node.querySelector(".group-action").addEventListener("change", onHeadChange);
+    node.querySelector(".group-enabled-cb").addEventListener("change", onHeadChange);
+    node.querySelector(".group-target").addEventListener("input", onHeadChange);
+    node.querySelector(".group-name").addEventListener("input", () => refreshGroupHead(node));
+
+    node.querySelector(".group-browse").addEventListener("click", () => {
+      browserTargetId = node.querySelector(".group-target");
+      $("browser").hidden = false;
+      loadBrowser(node.querySelector(".group-target").value || "/");
+    });
+
+    node.querySelector(".child-add").addEventListener("click", () => {
+      renderChild(node, {});
+      refreshChildOrder(node);
+      deliverMsg("已添加子规则，记得保存", "busy");
+    });
+
+    node.querySelector(".group-up").addEventListener("click", () => moveGroup(node, -1));
+    node.querySelector(".group-down").addEventListener("click", () => moveGroup(node, 1));
+    node.querySelector(".group-del").addEventListener("click", async () => {
+      const name = node.querySelector(".group-name").value.trim() || "未命名组";
+      const ok = await confirmDialog("删除规则组", `确定删除规则组「${name}」及其全部子规则吗？`, "删除");
+      if (!ok) return;
+      node.remove();
+      const list = $("group-list");
+      if (!list.querySelector(".group-item")) {
+        list.innerHTML = '<div class="empty-hint">还没有规则组，点击右上角「添加规则组」</div>';
+      } else {
+        refreshGroupOrder();
+      }
+      deliverMsg("规则组已删除，记得保存", "busy");
+    });
+
+    refreshGroupHead(node);
+    refreshChildOrder(node);
+    return node;
+  }
+
+  /** 渲染全部规则组 */
+  function renderGroups(groups) {
+    const list = $("group-list");
+    list.innerHTML = "";
+    if (!groups || !groups.length) {
+      list.innerHTML = '<div class="empty-hint">还没有规则组，点击右上角「添加规则组」</div>';
+      return;
+    }
+    groups.forEach((g) => list.appendChild(renderGroup(g)));
+    refreshGroupOrder();
+    enableGroupDrag();
+    list.querySelectorAll(".group-item").forEach(refreshChildOrder);
+  }
+
+  function moveGroup(node, dir) {
+    if (!node) return;
+    const sib = dir < 0 ? node.previousElementSibling : node.nextElementSibling;
+    if (!sib) return;
+    if (dir < 0) sib.before(node);
+    else sib.after(node);
+    refreshGroupOrder();
+    deliverMsg("组顺序已调整，记得保存", "busy");
+  }
+
+  /* ---------- 组拖动排序（仅 ⠿ 把手可拖） ---------- */
+  let dragGroup = null;
+
+  function enableGroupDrag() {
+    const list = $("group-list");
     if (list.dataset.dragBound === "1") return;
     list.dataset.dragBound = "1";
 
     list.addEventListener("dragstart", (e) => {
-      // 只接受从 ⠿ 把手发起的拖动
-      const grip = e.target.closest ? e.target.closest(".rule-grip") : null;
+      const grip = e.target.closest ? e.target.closest(".group-grip") : null;
       if (!grip) {
         e.preventDefault();
         return;
       }
-      const node = grip.closest(".rule-item");
+      const node = grip.closest(".group-item");
       if (!node) return;
-
-      dragNode = node;
+      dragGroup = node;
       node.classList.add("is-dragging");
-      // 拖动时让浏览器显示整条规则的半透明快照
       try {
         e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", node.dataset.id || "rule");
+        e.dataTransfer.setData("text/plain", node.dataset.id || "group");
         e.dataTransfer.setDragImage(node, 20, 20);
-      } catch (_) {
-        /* 某些浏览器不支持 setDragImage，忽略 */
-      }
+      } catch (_) {}
     });
 
     list.addEventListener("dragend", () => {
-      if (dragNode) dragNode.classList.remove("is-dragging");
-      dragNode = null;
-      refreshRuleOrder();
-      deliverMsg("顺序已调整，记得保存", "busy");
+      if (dragGroup) dragGroup.classList.remove("is-dragging");
+      dragGroup = null;
+      refreshGroupOrder();
+      deliverMsg("组顺序已调整，记得保存", "busy");
     });
 
     list.addEventListener("dragover", (e) => {
-      if (!dragNode) return;
+      if (!dragGroup) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-
-      const over = e.target.closest ? e.target.closest(".rule-item") : null;
-      if (!over || over === dragNode) return;
-
+      const over = e.target.closest ? e.target.closest(".group-item") : null;
+      if (!over || over === dragGroup) return;
       const rect = over.getBoundingClientRect();
-      const after = e.clientY > rect.top + rect.height / 2;
-      if (after) {
-        over.after(dragNode);
-      } else {
-        over.before(dragNode);
-      }
-      refreshRuleOrder();
+      if (e.clientY > rect.top + rect.height / 2) over.after(dragGroup);
+      else over.before(dragGroup);
+      refreshGroupOrder();
     });
 
     list.addEventListener("drop", (e) => {
-      if (!dragNode) return;
+      if (!dragGroup) return;
       e.preventDefault();
     });
   }
 
-  /** 上移/下移按钮（拖动的键盘/触屏备选方案） */
-  function moveRule(node, dir) {
-    if (!node) return;
-    const sibling = dir < 0 ? node.previousElementSibling : node.nextElementSibling;
-    if (!sibling) return;
-    if (dir < 0) sibling.before(node);
-    else sibling.after(node);
-    refreshRuleOrder();
-    deliverMsg("顺序已调整，记得保存", "busy");
+  /** 收集全部规则组为配置结构 */
+  function collectGroups() {
+    const out = [];
+    document.querySelectorAll("#group-list .group-item").forEach((node) => {
+      const children = [];
+      node.querySelectorAll(".child-item").forEach((c) => {
+        children.push({
+          id: c.dataset.id || "",
+          keywords: splitKeywords(c.querySelector(".child-keywords").value),
+          mark: c.querySelector(".child-mark-val").value.trim(),
+          mark_position: c.querySelector(".child-mark-pos").value,
+          enabled: c.querySelector(".child-enabled-cb").checked,
+        });
+      });
+      out.push({
+        id: node.dataset.id || "",
+        name: node.querySelector(".group-name").value.trim(),
+        kind: node.querySelector(".group-kind").value,
+        action: node.querySelector(".group-action").value,
+        enabled: node.querySelector(".group-enabled-cb").checked,
+        target_dir: node.querySelector(".group-target").value.trim(),
+        children,
+        _expanded: node.classList.contains("is-expanded"),
+      });
+    });
+    return out;
   }
 
-  /** 新增规则后滚动到可见位置 */
-  function promiseScrollToLastRule() {
+  /** 新增组后滚动到可见位置 */
+  function promiseScrollToLastGroup() {
     setTimeout(() => {
-      const items = document.querySelectorAll("#rule-list .rule-item");
+      const items = document.querySelectorAll("#group-list .group-item");
       const last = items[items.length - 1];
       if (last && last.scrollIntoView) {
         last.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }, 50);
-  }
-
-  function collectRules() {
-    const out = [];
-    document.querySelectorAll("#rule-list .rule-item").forEach((node) => {
-      const keywordsRaw = node.querySelector(".rule-keywords").value || "";
-      const keywords = keywordsRaw
-        .replace(/，/g, ",")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      out.push({
-        id: node.dataset.id || "",
-        name: node.querySelector(".rule-name").value.trim(),
-        kind: node.querySelector(".rule-kind").value,
-        action: node.querySelector(".rule-action").value,
-        enabled: node.querySelector(".rule-enabled-cb").checked,
-        keywords,
-        mark: node.querySelector(".rule-mark").value.trim(),
-        mark_position: node.querySelector(".rule-mark-pos").value,
-        target_dir: node.querySelector(".rule-target").value.trim(),
-        // 仅前端使用：重渲染时保留展开状态
-        _expanded: node.classList.contains("is-expanded"),
-      });
-    });
-    return out;
   }
 
   function collectDeliverConfig() {
@@ -510,7 +465,7 @@
       RECURSIVE: $("deliver-recursive").checked,
       REMOVE_EMPTY_DIRS: $("deliver-remove-empty").checked,
       OVERWRITE: $("deliver-overwrite").checked,
-      RULES: collectRules(),
+      GROUPS: collectGroups(),
     };
   }
 
@@ -533,7 +488,7 @@
       $("deliver-remove-empty").checked = cfg.REMOVE_EMPTY_DIRS !== false;
       $("deliver-overwrite").checked = cfg.OVERWRITE !== false;
 
-      renderRules(cfg.RULES || []);
+      renderGroups(cfg.GROUPS || []);
       updateDeliverStatus(data.watcher);
       state.loaded.deliver = true;
     } catch (e) {
@@ -1117,44 +1072,42 @@
     $("deliver-preview-btn").addEventListener("click", () => runDeliver(true));
     $("deliver-run-btn").addEventListener("click", () => runDeliver(false));
 
-    $("deliver-add-rule").addEventListener("click", () => {
-      const rules = collectRules();
-      rules.push({
+    $("deliver-add-group").addEventListener("click", () => {
+      const groups = collectGroups();
+      groups.push({
         id: "",
-        name: "新规则",
+        name: `规则组 ${groups.length + 1}`,
         kind: "jav",
         action: "move",
         enabled: true,
-        keywords: [],
-        mark: "-U",
-        mark_position: "after",
         target_dir: "",
-        _expanded: true, // 新增规则默认展开，方便立即填写
+        children: [{ keywords: [], mark: "-U", mark_position: "after", enabled: true }],
+        _expanded: true, // 新增组默认展开，方便立即填写
       });
-      renderRules(rules);
-      promiseScrollToLastRule();
-      deliverMsg("已新增规则（排在最后），记得保存", "busy");
+      renderGroups(groups);
+      promiseScrollToLastGroup();
+      deliverMsg("已新增规则组（排在最后），记得保存", "busy");
     });
 
     $("deliver-add-fallback").addEventListener("click", () => {
-      const rules = collectRules();
-      if (rules.some((r) => r.kind === "fallback")) {
-        toast("已存在兜底规则，同一时间只生效第一条");
+      const groups = collectGroups();
+      if (groups.some((g) => g.kind === "fallback")) {
+        toast("已存在兜底组，同一时间只生效第一个");
         return;
       }
-      rules.push({
+      groups.push({
         id: "",
         name: "兜底投递",
         kind: "fallback",
         action: "move",
         enabled: true,
-        keywords: [],
-        mark: "",
         target_dir: "",
+        children: [{ keywords: [], mark: "", mark_position: "after", enabled: true }],
+        _expanded: true,
       });
-      renderRules(rules);
-      promiseScrollToLastRule();
-      deliverMsg("已添加兜底规则，请填写目标目录后保存", "busy");
+      renderGroups(groups);
+      promiseScrollToLastGroup();
+      deliverMsg("已添加兜底组，请填写目标目录后保存", "busy");
     });
 
     // 监控目录的浏览按钮
@@ -1200,8 +1153,6 @@
 
     window.addEventListener("resize", () => {
       if (window.innerWidth > 900) closeDrawer();
-      // 宽度变化会改变换行位置，需重算关键字输入框高度
-      if (state.currentView === "deliver") autoGrowAll();
     });
   }
 

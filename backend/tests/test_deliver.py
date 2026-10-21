@@ -272,13 +272,17 @@ check("POST config 保存成功", d["success"] is True, d)
 check("配置已落盘", os.path.exists(os.path.join(CONFIG_DIR, "deliver.json")))
 saved = json.load(open(os.path.join(CONFIG_DIR, "deliver.json"), encoding="utf-8"))
 check("MIN_SIZE_MB 保存正确", saved["MIN_SIZE_MB"] == 50, saved.get("MIN_SIZE_MB"))
-check("规则数保存正确", len(saved["RULES"]) == 3, len(saved.get("RULES", [])))
+# 旧版扁平 RULES 会被自动迁移为 GROUPS（每组一个子规则）
+check("旧 RULES 自动迁移为 3 个组", len(saved.get("GROUPS", [])) == 3, len(saved.get("GROUPS", [])))
 
-# 关键字字符串形式的规范化
+# 关键字字符串形式的规范化（旧版规则入参，迁移后落到子规则里）
 r = client.post("/api/deliver/config", json={"RULES": [dict(RULES[0], keywords="restored，uncensored, foo")]})
 saved = r.get_json()["config"]
-check("逗号/中文逗号分隔的关键字被拆分",
-      saved["RULES"][0]["keywords"] == ["restored", "uncensored", "foo"], saved["RULES"][0]["keywords"])
+check(
+    "逗号/中文逗号分隔的关键字被拆分",
+    saved["GROUPS"][0]["children"][0]["keywords"] == ["restored", "uncensored", "foo"],
+    saved["GROUPS"][0]["children"][0]["keywords"],
+)
 
 # 预览接口
 r = client.post("/api/deliver/preview", json={"files": [USER_FILE, "plain.mp4"], "keywords": ["restored"], "mark": "-U"})
@@ -330,9 +334,11 @@ check("欧美不加标记时原样返回", naming.insert_mark_after_western(WEST
 
 # 按需求：欧美「规则」不提供标记功能，即使配置里填了 mark 也会被清空
 _wcfg = deliver.normalize_deliver_config(
-    {"RULES": [{"kind": "western", "keywords": ["blackedraw"], "mark": "-U", "target_dir": "/x"}]}
+    {"GROUPS": [{"kind": "western", "target_dir": "/x",
+                 "children": [{"keywords": ["blackedraw"], "mark": "-U"}]}]}
 )
-check("欧美规则配置层清除标记", _wcfg["RULES"][0]["mark"] == "", _wcfg["RULES"][0])
+check("欧美组配置层清除标记", _wcfg["GROUPS"][0]["children"][0]["mark"] == "",
+      _wcfg["GROUPS"][0]["children"][0])
 
 check("JAV 文件不误判为欧美", naming.find_western("DASS-787.mp4") is None)
 check("普通影片不误判为欧美", naming.find_western("Some.Movie.2024.1080p.mp4") is None)

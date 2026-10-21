@@ -112,27 +112,30 @@ check("普通路径保留扩展名",
       naming.apply_mark(plain, "x", "after", prefer_fanhao=False).endswith(".mp4"))
 
 print("\n=== C. 欧美/兜底规则禁用标记 ===")
+# 用新分组结构校验：欧美组与兜底组的子规则标记会被清空
 cfg = deliver.normalize_deliver_config(
     {
-        "RULES": [
-            {"kind": "western", "keywords": ["blackedraw"], "mark": "-U", "target_dir": "/a"},
-            {"kind": "fallback", "keywords": [], "mark": "-U", "target_dir": "/b"},
-            {"kind": "jav", "keywords": ["x"], "mark": "-U", "target_dir": "/c"},
+        "GROUPS": [
+            {"kind": "western", "target_dir": "/a", "children": [{"keywords": ["blackedraw"], "mark": "-U"}]},
+            {"kind": "fallback", "target_dir": "/b", "children": [{"keywords": [], "mark": "-U"}]},
+            {"kind": "jav", "target_dir": "/c", "children": [{"keywords": ["x"], "mark": "-U"}]},
         ]
     }
 )
-check("欧美规则标记被清空", cfg["RULES"][0]["mark"] == "", cfg["RULES"][0]["mark"])
-check("兜底规则标记被清空", cfg["RULES"][1]["mark"] == "", cfg["RULES"][1]["mark"])
-check("JAV 规则标记保留", cfg["RULES"][2]["mark"] == "-U")
+check("欧美组子规则标记被清空", cfg["GROUPS"][0]["children"][0]["mark"] == "")
+check("兜底组子规则标记被清空", cfg["GROUPS"][1]["children"][0]["mark"] == "")
+check("JAV 组子规则标记保留", cfg["GROUPS"][2]["children"][0]["mark"] == "-U")
 
 cfg2 = deliver.normalize_deliver_config(
-    {"RULES": [{"kind": "jav", "keywords": ["x"], "mark": "U", "mark_position": "before", "target_dir": "/c"}]}
+    {"GROUPS": [{"kind": "jav", "target_dir": "/c",
+                 "children": [{"keywords": ["x"], "mark": "U", "mark_position": "before"}]}]}
 )
-check("mark_position 保存为 before", cfg2["RULES"][0]["mark_position"] == "before")
+check("mark_position 保存为 before", cfg2["GROUPS"][0]["children"][0]["mark_position"] == "before")
 cfg3 = deliver.normalize_deliver_config(
-    {"RULES": [{"kind": "jav", "keywords": ["x"], "mark": "U", "mark_position": "乱写", "target_dir": "/c"}]}
+    {"GROUPS": [{"kind": "jav", "target_dir": "/c",
+                 "children": [{"keywords": ["x"], "mark": "U", "mark_position": "乱写"}]}]}
 )
-check("非法 mark_position 回退 after", cfg3["RULES"][0]["mark_position"] == "after")
+check("非法 mark_position 回退 after", cfg3["GROUPS"][0]["children"][0]["mark_position"] == "after")
 
 # ===========================================================================
 print("\n=== D. 投递引擎实际改名 ===")
@@ -155,18 +158,18 @@ touch("POST-222_restored.mp4")         # JAV 后 + restored
 touch("BlackedRaw.26.09.23.Title.mp4")
 touch("plainvideo_restored.mp4")       # 无番号
 
-rules = [
-    {"name": "前置", "kind": "jav", "keywords": ["pre-111"], "mark": "U", "mark_position": "before",
-     "target_dir": os.path.join(OUT, "pre"), "action": "move"},
-    {"name": "后置", "kind": "jav", "keywords": ["post-222"], "mark": "-U", "mark_position": "after",
-     "target_dir": os.path.join(OUT, "post"), "action": "move"},
-    {"name": "欧美", "kind": "western", "keywords": ["blackedraw"], "mark": "-U",
-     "target_dir": os.path.join(OUT, "west"), "action": "move"},
-    {"name": "普通", "kind": "other", "keywords": ["plainvideo"], "mark": "_chs", "mark_position": "after",
-     "target_dir": os.path.join(OUT, "other"), "action": "move"},
+groups = [
+    {"name": "前置", "kind": "jav", "action": "move", "target_dir": os.path.join(OUT, "pre"),
+     "children": [{"keywords": ["pre-111"], "mark": "U", "mark_position": "before"}]},
+    {"name": "后置", "kind": "jav", "action": "move", "target_dir": os.path.join(OUT, "post"),
+     "children": [{"keywords": ["post-222"], "mark": "-U", "mark_position": "after"}]},
+    {"name": "欧美", "kind": "western", "action": "move", "target_dir": os.path.join(OUT, "west"),
+     "children": [{"keywords": ["blackedraw"], "mark": "-U"}]},
+    {"name": "普通", "kind": "other", "action": "move", "target_dir": os.path.join(OUT, "other"),
+     "children": [{"keywords": ["plainvideo"], "mark": "_chs", "mark_position": "after"}]},
 ]
 stats = deliver.run_deliver(
-    {"SCAN_DIR": INBOX, "MIN_SIZE_MB": 1, "SETTLE_SECONDS": 0, "RULES": rules}, dry_run=False
+    {"SCAN_DIR": INBOX, "MIN_SIZE_MB": 1, "SETTLE_SECONDS": 0, "GROUPS": groups}, dry_run=False
 )
 check("处理了 4 个文件", stats["moved"] == 4, stats)
 
@@ -189,7 +192,8 @@ for n in ("PRE-111_restored.mp4", "POST-222_restored.mp4"):
 
 r = client.post(
     "/api/deliver/preview",
-    json={"files": ["PRE-111_restored.mp4", "POST-222_restored.mp4", "BlackedRaw.26.09.23.x.mp4"], "rules": rules},
+    json={"files": ["PRE-111_restored.mp4", "POST-222_restored.mp4", "BlackedRaw.26.09.23.x.mp4"],
+          "groups": groups},
 )
 d = r.get_json()
 outs = [x["output"] for x in d["results"]]
@@ -197,16 +201,19 @@ check("预览前置", outs[0] == "U-PRE-111_restored.mp4", outs)
 check("预览后置", outs[1] == "POST-222-U_restored.mp4", outs)
 check("预览欧美不改名", outs[2] == "BlackedRaw.26.09.23.x.mp4", outs)
 check("预览返回 mark_position", d["results"][0]["mark_position"] == "before", d["results"][0])
+check("预览返回命中组名", d["results"][0]["matched_group"] == "前置", d["results"][0])
 
 # 配置保存后能被读回
-r = client.post("/api/deliver/config", json={"RULES": rules})
-saved = r.get_json()["config"]["RULES"]
-check("配置保存 mark_position", saved[0]["mark_position"] == "before" and saved[1]["mark_position"] == "after",
-      [x.get("mark_position") for x in saved])
+r = client.post("/api/deliver/config", json={"GROUPS": groups})
+saved = r.get_json()["config"]["GROUPS"]
+check("配置保存 mark_position",
+      saved[0]["children"][0]["mark_position"] == "before"
+      and saved[1]["children"][0]["mark_position"] == "after",
+      [[c.get("mark_position") for c in g["children"]] for g in saved])
 r = client.get("/api/deliver/config")
-back = r.get_json()["config"]["RULES"]
-check("配置读回 mark_position 一致", back[0]["mark_position"] == "before")
-check("欧美规则读回后标记为空", back[2]["mark"] == "")
+back = r.get_json()["config"]["GROUPS"]
+check("配置读回 mark_position 一致", back[0]["children"][0]["mark_position"] == "before")
+check("欧美组读回后标记为空", back[2]["children"][0]["mark"] == "")
 
 print("\n" + "=" * 50)
 print(f"结果: {PASS} 通过, {FAIL} 失败")

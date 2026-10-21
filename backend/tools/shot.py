@@ -38,8 +38,12 @@ def shoot(url: str, out: str, width: int = 1400, height: int = 900, full: bool =
     if os.path.exists(out):
         os.remove(out)
 
-    # 浏览器 profile 放在系统临时目录，避免污染仓库工作区
-    profile = os.path.join(tempfile.gettempdir(), "9kgwash-shot-profile")
+    # 浏览器 profile 放在系统临时目录，避免污染仓库工作区。
+    # 优先用显式临时目录，取不到时退化为仓库外的兄弟目录。
+    profile_root = os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir()
+    if not os.path.isdir(profile_root):
+        profile_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    profile = os.path.join(profile_root, "9kgwash-shot-profile")
     os.makedirs(profile, exist_ok=True)
 
     args = [

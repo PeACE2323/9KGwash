@@ -141,43 +141,57 @@ def browse():
 
 @bp.route("/preview", methods=["POST"])
 def preview():
-    """预览命名效果：给一批文件名 + 规则，返回每条的命中与改名结果。"""
+    """预览命名效果：给一批文件名 + 规则（groups 或旧版 rules），返回命中与改名结果。"""
     data = request.get_json(silent=True) or {}
     files = data.get("files") or []
 
-    # 支持两种入参：直接给 rules（推荐），或给 keywords + mark 的单规则简写
-    if data.get("rules"):
-        rules = deliver.normalize_deliver_config({"RULES": data["rules"]})["RULES"]
+    # 支持 groups（推荐）、旧版 rules，以及单规则简写
+    if data.get("groups"):
+        cfg = deliver.normalize_deliver_config({"GROUPS": data["groups"]})
+    elif data.get("rules"):
+        cfg = deliver.normalize_deliver_config({"RULES": data["rules"]})
     else:
         keywords = data.get("keywords") or []
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.replace("，", ",").split(",") if k.strip()]
-        rules = deliver.normalize_deliver_config(
-            {"RULES": [{"kind": data.get("kind", "jav"), "keywords": keywords,
-                        "mark": data.get("mark") or "", "target_dir": "/x"}]}
-        )["RULES"]
+        cfg = deliver.normalize_deliver_config(
+            {
+                "GROUPS": [
+                    {
+                        "kind": data.get("kind", "jav"),
+                        "target_dir": "/x",
+                        "children": [
+                            {
+                                "keywords": keywords,
+                                "mark": data.get("mark") or "",
+                                "mark_position": data.get("mark_position", "after"),
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
 
     results = []
     for name in files:
         name = str(name)
-        rule, kw = deliver.classify_file(name, rules)
+        group, child, kw = deliver.classify_file(name, cfg)
         fallback = False
-        if not rule:
-            rule = deliver.find_fallback_rule(rules)
-            fallback = bool(rule)
-        if not rule:
-            rule = rules[0] if rules else None
+        if not group:
+            group, child = deliver.find_fallback_group(cfg)
+            fallback = bool(group)
+        child = child or {}
 
-        kind = (rule or {}).get("kind", "jav")
-        mark = (rule or {}).get("mark", "")
-        position = (rule or {}).get("mark_position", "after")
+        kind = (group or {}).get("kind", "jav")
+        mark = child.get("mark", "") or ""
+        position = child.get("mark_position", "after")
 
         jav_info = naming.find_fanhao(name)
         west_info = naming.find_western(name)
 
         output = name
         reason = ""
-        if not rule:
+        if not group:
             reason = "没有可用规则"
         elif kind == "jav":
             if jav_info and mark:
@@ -195,7 +209,7 @@ def preview():
         results.append(
             {
                 "input": name,
-                "matched_rule": (rule or {}).get("name"),
+                "matched_group": (group or {}).get("name"),
                 "rule_kind": kind,
                 "fallback": fallback,
                 "matched_keyword": kw,

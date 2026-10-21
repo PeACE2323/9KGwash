@@ -57,52 +57,111 @@ def default_deliver_config() -> dict:
         "OVERWRITE": True,             # 目标同名文件覆盖
         "WATCH_INTERVAL": 60,          # 监控轮询间隔（秒）
         "SETTLE_SECONDS": 10,          # 文件最后修改距今需超过此时长才处理（防止拷到一半）
-        # 关键字规则：命中任一条即执行
-        #   kind = "jav"    -> 命中后加标记 + 投递到番号目标目录
-        #   kind = "other"  -> 命中后直接投递到 target_dir（不改名）
+        # 分组规则：优先级 = 先看组的顺序，再看组内子规则的顺序，命中即停
+        #   GROUPS[*].kind        组内共享：jav / western / other / fallback
+        #   GROUPS[*].target_dir  组内共享目标目录
+        #   GROUPS[*].children    组内子规则：只包含 keywords / mark / mark_position
+        "GROUPS": [],
+        # 兼容字段：旧版扁平规则列表（读取时自动迁移为分组）
         "RULES": [],
     }
 
 
-def _normalize_rule(raw: dict, idx: int = 0) -> dict:
-    """把前端传来的规则规范化，保证字段完整、类型正确。
+VALID_KINDS = ("jav", "western", "other", "fallback")
 
-    kind:
-        jav     命中后在 JAV 番号前/后插标记（由 mark_position 决定），投递到目标目录
-        western 命中厂牌且含「年.月.日」时原样投递，**不提供标记功能**
-        other   命中后按 mark_position 给文件名加标记（无番号意义），投递到目标目录
-        fallback 兜底：前面所有规则都没命中时执行（仅媒体文件且过体积阈值）
-    """
-    kind = str(raw.get("kind", "jav")).lower()
-    if kind not in ("jav", "western", "other", "fallback"):
-        kind = "jav"
 
-    keywords = raw.get("keywords", [])
-    if isinstance(keywords, str):
-        # 允许前端用逗号/换行分隔
-        keywords = [k.strip() for k in keywords.replace("，", ",").replace("\n", ",").split(",")]
-    keywords = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+def _split_keywords(raw) -> list[str]:
+    """把关键字字段统一为字符串列表（兼容字符串、中文逗号、换行分隔）。"""
+    if isinstance(raw, str):
+        raw = raw.replace("，", ",").replace("\n", ",").split(",")
+    return [str(k).strip() for k in (raw or []) if str(k).strip()]
 
-    # 标记位置：before / after；兜底规则和欧美规则不使用标记
+
+def _normalize_child(raw: dict, idx: int = 0, group_kind: str = "jav") -> dict:
+    """组内子规则：只保留关键字与标记相关字段。"""
     position = str(raw.get("mark_position", "after")).lower()
     if position not in ("before", "after"):
         position = "after"
 
     mark = str(raw.get("mark") or "").strip()
-    if kind in ("western", "fallback"):
+    # 欧美规则与兜底规则不提供标记
+    if group_kind in ("western", "fallback"):
         mark = ""
 
     return {
-        "id": str(raw.get("id") or f"rule{idx + 1}"),
-        "name": str(raw.get("name") or f"规则{idx + 1}").strip(),
-        "kind": kind,
-        "enabled": bool(raw.get("enabled", True)),
-        "keywords": keywords,
+        "id": str(raw.get("id") or f"c{idx + 1}"),
+        "keywords": _split_keywords(raw.get("keywords")),
         "mark": mark,
         "mark_position": position,
+        "enabled": bool(raw.get("enabled", True)),
+    }
+
+
+def _normalize_group(raw: dict, idx: int = 0) -> dict:
+    """规范化一个规则组（组共享类型/目录/动作，子规则只含关键字与标记）。"""
+    kind = str(raw.get("kind", "jav")).lower()
+    if kind not in VALID_KINDS:
+        kind = "jav"
+
+    children_raw = raw.get("children")
+    if not isinstance(children_raw, list):
+        # 兼容：组上直接挂 keywords（单子规则简写）
+        children_raw = [{"keywords": raw.get("keywords"), "mark": raw.get("mark"),
+                         "mark_position": raw.get("mark_position")}]
+
+    children = [
+        _normalize_child(c, i, kind) for i, c in enumerate(children_raw) if isinstance(c, dict)
+    ]
+
+    # 兜底组如果没有任何子规则，自动补一条空关键字子规则（兜底不依赖关键字）
+    if kind == "fallback" and not children:
+        children = [_normalize_child({}, 0, kind)]
+
+    return {
+        "id": str(raw.get("id") or f"g{idx + 1}"),
+        "name": str(raw.get("name") or f"规则组{idx + 1}").strip(),
+        "kind": kind,
+        "enabled": bool(raw.get("enabled", True)),
         "target_dir": str(raw.get("target_dir") or "").strip(),
         "action": "copy" if str(raw.get("action", "move")).lower() == "copy" else "move",
+        "children": children,
     }
+
+
+def _migrate_flat_rules(rules: list) -> list:
+    """把旧版扁平 RULES 迁移为分组结构。
+
+    每个旧规则 -> 一个组（保留其类型/目录/动作），
+    旧规则的关键字与标记 -> 组内唯一一条子规则。
+    """
+    groups = []
+    for i, r in enumerate(rules):
+        if not isinstance(r, dict):
+            continue
+        kind = str(r.get("kind", "jav")).lower()
+        if kind not in VALID_KINDS:
+            kind = "jav"
+        groups.append(
+            _normalize_group(
+                {
+                    "id": f"g{i + 1}",
+                    "name": r.get("name") or f"规则{i + 1}",
+                    "kind": kind,
+                    "enabled": r.get("enabled", True),
+                    "target_dir": r.get("target_dir"),
+                    "action": r.get("action", "move"),
+                    "children": [
+                        {
+                            "keywords": r.get("keywords"),
+                            "mark": r.get("mark"),
+                            "mark_position": r.get("mark_position", "after"),
+                        }
+                    ],
+                },
+                i,
+            )
+        )
+    return groups
 
 
 def normalize_deliver_config(raw: dict) -> dict:
@@ -126,10 +185,32 @@ def normalize_deliver_config(raw: dict) -> dict:
                 continue
             cfg[key] = max(0, val)
 
-    rules = raw.get("RULES", [])
-    if isinstance(rules, list):
-        cfg["RULES"] = [_normalize_rule(r, i) for i, r in enumerate(rules) if isinstance(r, dict)]
+    # 优先读 GROUPS；若只有旧版 RULES，则自动迁移为分组
+    groups_raw = raw.get("GROUPS")
+    if isinstance(groups_raw, list) and groups_raw:
+        cfg["GROUPS"] = [
+            _normalize_group(g, i) for i, g in enumerate(groups_raw) if isinstance(g, dict)
+        ]
+    else:
+        rules_raw = raw.get("RULES")
+        if isinstance(rules_raw, list) and rules_raw:
+            cfg["GROUPS"] = _migrate_flat_rules(rules_raw)
+
     return cfg
+
+
+def iter_group_children(cfg: dict):
+    """按「组序 -> 组内序」产出 (组, 子规则)，跳过停用的组与子规则。
+
+    这是优先级判定的唯一入口：先遍历组，再遍历组内子规则，命中即停。
+    """
+    for group in cfg.get("GROUPS", []):
+        if not group.get("enabled", True):
+            continue
+        for child in group.get("children", []):
+            if not child.get("enabled", True):
+                continue
+            yield group, child
 
 
 # ---------------------------------------------------------------------------
@@ -230,43 +311,45 @@ def iter_files(root: str, recursive: bool):
 # ---------------------------------------------------------------------------
 # 核心：处理单个文件
 # ---------------------------------------------------------------------------
-def classify_file(filename: str, rules: list[dict]) -> tuple[dict | None, str | None]:
-    """按规则顺序（从上到下）匹配，先命中且「适用」者生效。
+def classify_file(filename: str, cfg: dict) -> tuple[dict | None, dict | None, str | None]:
+    """按「组序 -> 组内子规则序」匹配，命中即停。
 
-    返回 (命中的规则, 命中的关键字/厂牌)。
-    - jav / western / other：需要 keyword 命中；且 jav/western 还需文件名
-      能被对应类型解析（不含番号/日期的候选会视为「不适用」，继续尝试下一条规则）
+    返回 (命中的组, 命中的子规则, 命中的关键字)。
+    - jav / western / other：需要关键字命中，且格式需与该组类型匹配
+      （命中但格式不符 -> 视为不适用，继续尝试组内下一条 / 下一个组）
     - fallback：不参与关键字匹配，仅当以上全部未命中时兜底
     """
-    for rule in rules:
-        if not rule.get("enabled", True):
-            continue
-        kind = rule.get("kind")
+    for group, child in iter_group_children(cfg):
+        kind = group.get("kind")
         if kind == "fallback":
             continue
 
-        kw = naming.match_any_keyword(filename, rule.get("keywords", []))
+        kw = naming.match_any_keyword(filename, child.get("keywords", []))
         if not kw:
             continue
 
         # 类型适用性校验：命中了关键字但格式对不上，交给后续规则
         if kind == "jav" and not naming.find_fanhao(filename):
-            logger.info(f"   [-] ↩️ [投递] 规则[{rule.get('name')}]命中关键词[{kw}]但无日本番号，改试下一条规则")
+            logger.info(
+                f"   [-] ↩️ [投递] 组[{group.get('name')}]子规则命中关键词[{kw}]但无日本番号，继续下一条"
+            )
             continue
         if kind == "western" and not naming.find_western(filename):
-            logger.info(f"   [-] ↩️ [投递] 规则[{rule.get('name')}]命中厂牌[{kw}]但无欧美日期，改试下一条规则")
+            logger.info(
+                f"   [-] ↩️ [投递] 组[{group.get('name')}]子规则命中厂牌[{kw}]但无欧美日期，继续下一条"
+            )
             continue
 
-        return rule, kw
+        return group, child, kw
+    return None, None, None
+
+
+def find_fallback_group(cfg: dict) -> tuple[dict | None, dict | None]:
+    """返回第一条启用中的兜底组及其首个子规则。"""
+    for group, child in iter_group_children(cfg):
+        if group.get("kind") == "fallback":
+            return group, child
     return None, None
-
-
-def find_fallback_rule(rules: list[dict]) -> dict | None:
-    """返回第一条启用中的兜底规则。"""
-    for rule in rules:
-        if rule.get("enabled", True) and rule.get("kind") == "fallback":
-            return rule
-    return None
 
 
 def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
@@ -309,74 +392,78 @@ def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
         result["reason"] = "非媒体文件"
         return result
 
-    # ---- 3. 按顺序匹配关键字规则 ----
-    rules = cfg.get("RULES", [])
-    rule, kw = classify_file(filename, rules)
+    # ---- 3. 按「组序 -> 组内序」匹配 ----
+    group, child, kw = classify_file(filename, cfg)
     fallback = False
 
-    # 兜底：所有关键字规则都没命中时，交给兜底规则
-    if not rule:
-        rule = find_fallback_rule(rules)
-        if rule:
+    # 兜底：所有关键字规则都没命中时，交给兜底组
+    if not group:
+        group, child = find_fallback_group(cfg)
+        if group:
             fallback = True
             result["reason"] = "未命中关键字，走兜底规则"
         else:
             result["reason"] = "未命中任何关键字规则"
             return result
 
-    target_root = rule.get("target_dir", "").strip()
+    child = child or {}
+    group_name = group.get("name", "")
+
+    target_root = group.get("target_dir", "").strip()
     if not target_root:
-        result["reason"] = f"规则[{rule['name']}]未配置目标目录"
-        logger.warning(f"   [-] ⚠️ [投递] {filename} 命中规则[{rule['name']}]但未配置目标目录，跳过")
+        result["reason"] = f"规则组[{group_name}]未配置目标目录"
+        logger.warning(f"   [-] ⚠️ [投递] {filename} 命中规则组[{group_name}]但未配置目标目录，跳过")
         return result
 
     new_name = filename
     final_dir = target_root
-    kind = rule.get("kind")
+    kind = group.get("kind")
+    mark = child.get("mark") or ""
+    position = child.get("mark_position", "after")
 
     if kind == "jav":
         info = naming.find_fanhao(filename)
         if not info:
             result["reason"] = f"命中关键词[{kw}]但文件名不含日本番号，不投递"
-            logger.warning(f"   [-] ⚠️ [投递] {filename} 命中JAV规则但未识别到番号，跳过")
+            logger.warning(f"   [-] ⚠️ [投递] {filename} 命中JAV规则组但未识别到番号，跳过")
             return result
         # 未填写标记则不改名；有标记则按 mark_position 决定加在番号前还是后
-        if rule.get("mark"):
-            position = rule.get("mark_position", "after")
-            new_name = naming.apply_mark_to_fanhao(filename, rule["mark"], position)
-        pos_label = "番号前" if rule.get("mark_position") == "before" else "番号后"
-        logger.info(f"   [-] 🏷️ [投递] 命中JAV规则[{rule['name']}]关键词[{kw}] "
-                    f"番号={info['fanhao']} 标记={rule.get('mark') or '无'}"
-                    + (f"({pos_label})" if rule.get("mark") else ""))
+        if mark:
+            new_name = naming.apply_mark_to_fanhao(filename, mark, position)
+        pos_label = "番号前" if position == "before" else "番号后"
+        logger.info(
+            f"   [-] 🏷️ [投递] 组[{group_name}]命中关键词[{kw}] 番号={info['fanhao']} "
+            f"标记={mark or '无'}" + (f"({pos_label})" if mark else "")
+        )
 
     elif kind == "western":
         info = naming.find_western(filename)
         if not info:
             result["reason"] = f"命中厂牌[{kw}]但文件名不含「年.月.日」，不投递"
-            logger.warning(f"   [-] ⚠️ [投递] {filename} 命中欧美规则但未识别到日期，跳过")
+            logger.warning(f"   [-] ⚠️ [投递] {filename} 命中欧美规则组但未识别到日期，跳过")
             return result
         # 欧美规则只做厂牌匹配与投递，不提供标记功能
-        logger.info(f"   [-] 🏷️ [投递] 命中欧美规则[{rule['name']}]厂牌[{kw}] 日期={info['date']}")
+        logger.info(f"   [-] 🏷️ [投递] 组[{group_name}]命中厂牌[{kw}] 日期={info['date']}")
 
     elif kind == "fallback":
-        logger.info(f"   [-] 🏷️ [投递] 未命中任何关键字，执行兜底规则[{rule['name']}]")
+        logger.info(f"   [-] 🏷️ [投递] 未命中任何关键字，执行兜底组[{group_name}]")
 
     else:  # other：普通关键字规则，支持在文件名前/后加标记
-        if rule.get("mark"):
-            position = rule.get("mark_position", "after")
-            new_name = naming.apply_mark(filename, rule["mark"], position, prefer_fanhao=False)
+        if mark:
+            new_name = naming.apply_mark(filename, mark, position, prefer_fanhao=False)
             pos_label = "文件名前" if position == "before" else "文件名后"
-            logger.info(f"   [-] 🏷️ [投递] 命中普通规则[{rule['name']}]关键词[{kw}] "
-                        f"标记={rule['mark']}({pos_label})")
+            logger.info(
+                f"   [-] 🏷️ [投递] 组[{group_name}]命中关键词[{kw}] 标记={mark}({pos_label})"
+            )
         else:
-            logger.info(f"   [-] 🏷️ [投递] 命中普通规则[{rule['name']}]关键词[{kw}]")
+            logger.info(f"   [-] 🏷️ [投递] 组[{group_name}]命中关键词[{kw}]")
 
     result["new_name"] = new_name
-    result["rule"] = rule.get("name")
+    result["rule"] = group_name
     result["fallback"] = fallback
 
     # ---- 4. 执行投递 ----
-    action = rule.get("action", "move")
+    action = group.get("action", "move")
     overwrite = bool(cfg.get("OVERWRITE", True))
 
     if dry_run:
