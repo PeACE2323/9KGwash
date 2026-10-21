@@ -486,7 +486,14 @@ r = client.get("/")
 html = r.data.decode("utf-8")
 check("首页 200", r.status_code == 200)
 check("首页含版本号", "9.15.0" in html)
-check("首页含全部面板锚点", all(k in html for k in ["panel-hound", "panel-dedup", "log-box", "config-form", "history-box"]))
+# 新版布局：左侧导航 + 右侧视图
+check("首页含侧边导航", 'id="sidebar"' in html and 'id="nav"' in html)
+check("首页含全部功能视图",
+      all(f'id="view-{v}"' in html for v in ["overview", "hound", "dedup", "config", "logs"]))
+check("首页导航项与视图一致",
+      all(f'data-view="{v}"' in html for v in ["overview", "hound", "dedup", "config", "logs"]))
+check("首页关键控件齐全",
+      all(k in html for k in ["log-box", "config-form", "hound-scan-btn", "dedup-scan-btn", "menu-btn"]))
 r = client.get("/static/js/app.js")
 check("静态 JS 可访问", r.status_code == 200 and b"scan_empty_folders" in r.data)
 r = client.get("/static/css/app.css")

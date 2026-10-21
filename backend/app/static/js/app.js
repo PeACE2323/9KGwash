@@ -1,23 +1,32 @@
 /* =========================================================================
-   9KGwash 控制台前端逻辑
-   - 日志 2 秒轮询（可暂停；暂停后仅缓存，恢复时补拉）
-   - 一键复制番号（Clipboard API + execCommand 双兜底）
-   - 空间猎犬 / 影片查重 扫描与清理
-   - 配置热更新
+   9KGwash 控制台前端
+   结构：左侧导航 + 右侧视图（单页切换，hash 路由可深链）
+   视图：overview / hound / dedup / config / logs
    ========================================================================= */
 (function () {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
+
+  const VIEW_META = {
+    overview: { title: "运行概览", desc: "当前网关状态与运行模式" },
+    hound: { title: "空间猎犬", desc: "排查并清理本地无 STRM 的空壳目录" },
+    dedup: { title: "影片查重", desc: "全库番号比对与一键洗板清理" },
+    config: { title: "运行配置", desc: "Webhook、运行模式与路径查看" },
+    logs: { title: "活动日志", desc: "洗板全过程实时输出" },
+  };
+
   const state = {
+    currentView: "overview",
     logPaused: false,
     lastLogText: "",
     emptyFolders: [],
     duplicates: [],
     busy: false,
+    loaded: { overview: false, hound: false, dedup: false },
   };
 
-  /* ----------------------------- 通用 UI ----------------------------- */
+  /* ----------------------------- 通用 ----------------------------- */
   function toast(msg) {
     const el = $("toast");
     $("toast-msg").textContent = msg;
@@ -47,8 +56,7 @@
 
   async function api(url, options) {
     const res = await fetch(url, options);
-    const data = await res.json();
-    return data;
+    return res.json();
   }
 
   function escapeHtml(s) {
@@ -58,24 +66,6 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
-  }
-
-  /* ----------------------------- 复制 ----------------------------- */
-  function fallbackCopy(text, cb) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    try {
-      document.execCommand("copy");
-      if (cb) cb();
-    } catch (err) {
-      toast("复制失败: " + text);
-    }
-    document.body.removeChild(ta);
   }
 
   function copyText(text, flagEl) {
@@ -91,10 +81,141 @@
       }
       toast("已复制: " + text);
     };
+    const fallback = () => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        done();
+      } catch (e) {
+        toast("复制失败: " + text);
+      }
+      document.body.removeChild(ta);
+    };
     if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+      navigator.clipboard.writeText(text).then(done).catch(fallback);
     } else {
-      fallbackCopy(text, done);
+      fallback();
+    }
+  }
+
+  /* ----------------------------- 导航 ----------------------------- */
+  function closeDrawer() {
+    $("sidebar").classList.remove("open");
+    const bd = document.querySelector(".nav-backdrop");
+    if (bd) bd.classList.remove("show");
+  }
+
+  function openDrawer() {
+    $("sidebar").classList.add("open");
+    let bd = document.querySelector(".nav-backdrop");
+    if (!bd) {
+      bd = document.createElement("div");
+      bd.className = "nav-backdrop";
+      bd.addEventListener("click", closeDrawer);
+      document.body.appendChild(bd);
+    }
+    // 强制重排后再加 show，保证过渡动画生效
+    void bd.offsetWidth;
+    bd.classList.add("show");
+  }
+
+  function switchView(name) {
+    if (!VIEW_META[name]) name = "overview";
+    state.currentView = name;
+
+    document.querySelectorAll(".nav-item").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.view === name);
+    });
+    document.querySelectorAll(".view").forEach((v) => {
+      v.classList.toggle("active", v.id === "view-" + name);
+    });
+
+    $("view-title").textContent = VIEW_META[name].title;
+    $("view-desc").textContent = VIEW_META[name].desc;
+
+    if (location.hash !== "#" + name) {
+      history.replaceState(null, "", "#" + name);
+    }
+
+    if (window.innerWidth <= 900) closeDrawer();
+
+    // 首次进入某视图时按需加载
+    if (name === "overview") loadStatus();
+    if (name === "logs") fetchLogs();
+  }
+
+  /* ----------------------------- 概览 ----------------------------- */
+  function setStat(id, text, cls) {
+    const el = $(id);
+    el.textContent = text;
+    el.className = "stat-value" + (cls ? " " + cls : "");
+  }
+
+  async function loadStatus() {
+    try {
+      const st = await api("/api/status");
+      if (!st.success) return;
+
+      setStat("stat-mode", st.dry_run ? "DRY RUN" : "实弹武装", st.dry_run ? "warn" : "bad");
+
+      const watched = st.watched || [];
+      setStat("stat-watched", watched.length ? watched.length + " 个" : "未配置",
+        watched.length ? "" : "bad");
+
+      $("stat-mount-path").textContent = st.mount_base_path || "-";
+      $("stat-meta-path").textContent = st.metadata_base_path || "-";
+
+      const mountOk = watched.some((w) => w.mount_ok);
+      const metaOk = watched.some((w) => w.meta_ok);
+      setStat("stat-mount", mountOk ? "已挂载" : "未挂载", mountOk ? "ok" : "bad");
+      setStat("stat-meta", metaOk ? "可访问" : "不可访问", metaOk ? "ok" : "bad");
+
+      // 路径明细
+      const list = $("path-list");
+      if (!watched.length) {
+        list.innerHTML = '<div class="empty-hint">未配置任何监听目录</div>';
+      } else {
+        list.innerHTML = watched
+          .map(
+            (w) => `
+          <div class="path-item">
+            <div class="path-item-head">
+              <span class="path-item-title">${escapeHtml(w.watch_path)}</span>
+              <span class="${w.mount_ok && w.meta_ok ? "badge-ok" : "badge-bad"}">
+                ${w.mount_ok && w.meta_ok ? "正常" : "异常"}
+              </span>
+            </div>
+            <div class="path-row"><span class="k">网盘</span><span>${escapeHtml(w.mount_path)}</span>
+              <span class="${w.mount_ok ? "badge-ok" : "badge-bad"}">${w.mount_ok ? "存在" : "缺失"}</span></div>
+            <div class="path-row"><span class="k">元数据</span><span>${escapeHtml(w.meta_path)}</span>
+              <span class="${w.meta_ok ? "badge-ok" : "badge-bad"}">${w.meta_ok ? "存在" : "缺失"}</span></div>
+          </div>`
+          )
+          .join("");
+      }
+
+      // 配置视图的只读路径
+      $("cfg-mount").textContent = st.mount_base_path || "-";
+      $("cfg-meta").textContent = st.metadata_base_path || "-";
+      $("cfg-watched").textContent = watched.map((w) => w.watch_path).join(", ") || "-";
+
+      // 模式指示
+      const pill = $("mode-pill");
+      pill.textContent = st.dry_run ? "DRY RUN 模拟" : "实弹武装";
+      pill.className = "pill " + (st.dry_run ? "pill-warn" : "pill-danger");
+
+      const foot = $("foot-mode");
+      foot.textContent = st.dry_run ? "DRY RUN 模拟" : "实弹武装";
+      foot.classList.toggle("danger", !st.dry_run);
+
+      state.loaded.overview = true;
+    } catch (e) {
+      setStat("stat-mode", "读取失败", "bad");
     }
   }
 
@@ -107,13 +228,11 @@
       const line = String(raw).replace(/\r?\n$/, "");
       const div = document.createElement("div");
       div.className = "log-line";
-      const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (\[[A-Z]+\]) (.*)$/);
-      if (tsMatch) {
-        const level = tsMatch[2];
-        if (level === "[ERROR]") div.classList.add("lvl-error");
-        else if (level === "[WARNING]") div.classList.add("lvl-warning");
-        div.innerHTML =
-          '<span class="ts">' + escapeHtml(tsMatch[1]) + "</span> " + escapeHtml(tsMatch[3]);
+      const m = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (\[[A-Z]+\]) (.*)$/);
+      if (m) {
+        if (m[2] === "[ERROR]") div.classList.add("lvl-error");
+        else if (m[2] === "[WARNING]") div.classList.add("lvl-warning");
+        div.innerHTML = '<span class="ts">' + escapeHtml(m[1]) + "</span> " + escapeHtml(m[3]);
       } else {
         div.textContent = line;
       }
@@ -134,7 +253,7 @@
         renderLogs(lines);
       }
     } catch (e) {
-      /* 网络抖动时静默重试 */
+      /* 静默重试 */
     }
   }
 
@@ -142,39 +261,32 @@
     state.logPaused = !state.logPaused;
     const btn = $("pause-btn");
     const ind = $("log-indicator");
+    const dot = $("nav-log-dot");
     if (state.logPaused) {
       btn.textContent = "▶️ 恢复";
       ind.textContent = "已暂停";
       ind.classList.add("paused");
+      if (dot) dot.style.display = "none";
     } else {
       btn.textContent = "⏸️ 暂停";
       ind.textContent = "实时监控中";
       ind.classList.remove("paused");
+      if (dot) dot.style.display = "";
       fetchLogs();
     }
-  }
-
-  /* ----------------------------- Tab ----------------------------- */
-  function switchTab(name) {
-    document.querySelectorAll(".tab").forEach((t) => {
-      t.classList.toggle("active", t.dataset.tab === name);
-    });
-    $("panel-hound").hidden = name !== "hound";
-    $("panel-dedup").hidden = name !== "dedup";
   }
 
   /* ----------------------------- 空间猎犬 ----------------------------- */
   function renderEmptyFolders(folders) {
     state.emptyFolders = folders.slice();
     const box = $("hound-results");
-    $("hound-count").textContent = folders.length ? `共 ${folders.length} 个空壳目录` : "";
+    $("hound-count").textContent = folders.length ? `共 ${folders.length} 个` : "";
     if (!folders.length) {
-      box.innerHTML =
-        '<div class="empty-hint">✅ 完美！未发现任何本地无 STRM 的空壳目录。</div>';
+      box.innerHTML = '<div class="empty-hint">✅ 完美！未发现任何本地无 STRM 的空壳目录。</div>';
       $("hound-actions").hidden = true;
       return;
     }
-    const rows = folders
+    box.innerHTML = folders
       .map(
         (f) =>
           '<div class="shell-item"><span class="path" title="' +
@@ -184,16 +296,15 @@
           "</span></div>"
       )
       .join("");
-    box.innerHTML = rows;
     $("hound-actions").hidden = false;
   }
 
-  async function scanEmptyFolders(silent) {
+  async function scanEmptyFolders() {
     if (state.busy) return;
     state.busy = true;
-    const btn = silent ? $("hound-scan-btn") : $("btn-scan-empty");
+    const btn = $("hound-scan-btn");
     const label = btn.textContent;
-    btn.textContent = "⏳ 扫描中...（看右侧日志）";
+    btn.textContent = "⏳ 扫描中...";
     btn.disabled = true;
     try {
       const data = await api("/api/scan_empty_folders");
@@ -202,6 +313,7 @@
         return;
       }
       renderEmptyFolders(data.empty_meta || []);
+      toast("扫描完成，详见活动日志");
     } catch (e) {
       toast("扫描请求失败，请检查后端状态");
     } finally {
@@ -246,7 +358,7 @@
   function cancelHound() {
     state.emptyFolders = [];
     $("hound-results").innerHTML =
-      '<div class="empty-hint">暂无空壳扫描数据<br><small>点击左侧「查找本地空壳文件夹」排查本地无 STRM 的残留孤儿目录</small></div>';
+      '<div class="empty-hint">暂无空壳扫描数据<br><small>点击右上角「开始扫描」</small></div>';
     $("hound-actions").hidden = true;
     $("hound-count").textContent = "";
   }
@@ -255,7 +367,7 @@
   function renderDuplicates(groups) {
     state.duplicates = groups.slice();
     const box = $("dedup-results");
-    $("dedup-count").textContent = groups.length ? `共 ${groups.length} 组重复影片` : "";
+    $("dedup-count").textContent = groups.length ? `共 ${groups.length} 组` : "";
     if (!groups.length) {
       box.innerHTML = '<div class="empty-hint">✅ 媒体库干干净净！未发现任何本地重复影片。</div>';
       $("dedup-actions").hidden = true;
@@ -310,12 +422,12 @@
     $("dedup-actions").hidden = false;
   }
 
-  async function scanDuplicates(silent) {
+  async function scanDuplicates() {
     if (state.busy) return;
     state.busy = true;
-    const btn = silent ? $("dedup-scan-btn") : $("btn-scan-dup");
+    const btn = $("dedup-scan-btn");
     const label = btn.textContent;
-    btn.textContent = "⏳ 扫描中...（看右侧日志）";
+    btn.textContent = "⏳ 扫描中...";
     btn.disabled = true;
     try {
       const data = await api("/api/scan_duplicates");
@@ -324,6 +436,7 @@
         return;
       }
       renderDuplicates(data.duplicates || []);
+      toast("查重完成，详见活动日志");
     } catch (e) {
       toast("查重请求异常，请检查后端状态");
     } finally {
@@ -356,7 +469,6 @@
       if (data.success) {
         toast(`查重洗板完成：清退 ${data.deleted} 处`);
         cancelDedup();
-        loadHistory();
       } else {
         toast("执行洗板出现异常，请参阅活动日志");
       }
@@ -371,7 +483,7 @@
   function cancelDedup() {
     state.duplicates = [];
     $("dedup-results").innerHTML =
-      '<div class="empty-hint">暂无查重数据<br><small>支持标准纯番号严格比对及前置数字双向归一化互查</small></div>';
+      '<div class="empty-hint">暂无查重数据<br><small>点击右上角「开始查重」</small></div>';
     $("dedup-actions").hidden = true;
     $("dedup-count").textContent = "";
   }
@@ -399,15 +511,8 @@
       if (res.success) {
         msg.textContent = "✅ 已保存并实时生效";
         msg.className = "status-msg ok";
-        const pill = $("mode-pill");
-        if (payload.DRY_RUN) {
-          pill.textContent = "DRY RUN 模拟";
-          pill.className = "pill pill-warn";
-        } else {
-          pill.textContent = "实弹武装";
-          pill.className = "pill pill-danger";
-        }
         toast("配置已热更新");
+        loadStatus();
       } else {
         msg.textContent = "❌ 保存失败";
         msg.className = "status-msg err";
@@ -418,68 +523,24 @@
     }
   }
 
-  /* ----------------------------- 洗板档案 ----------------------------- */
-  function fmtTime(ts) {
-    const d = new Date(ts * 1000);
-    const p = (n) => String(n).padStart(2, "0");
-    return (
-      d.getFullYear() +
-      "-" +
-      p(d.getMonth() + 1) +
-      "-" +
-      p(d.getDate()) +
-      " " +
-      p(d.getHours()) +
-      ":" +
-      p(d.getMinutes())
-    );
-  }
-
-  async function loadHistory() {
-    try {
-      const data = await api("/api/history");
-      $("history-count").textContent = data.count;
-      const box = $("history-box");
-      if (!data.items.length) {
-        box.innerHTML = '<div class="empty-hint">档案为空<br><small>洗板网关清理过的特征会记录在此，用于抵御 Emby 延迟删除通知</small></div>';
-        return;
-      }
-      box.innerHTML = data.items
-        .map(
-          (it) =>
-            '<div class="history-item"><span class="history-key" data-copy="' +
-            escapeHtml(it.key) +
-            '" title="点击复制">' +
-            escapeHtml(it.key) +
-            '</span><span class="history-time">' +
-            fmtTime(it.ts) +
-            "</span></div>"
-        )
-        .join("");
-    } catch (e) {
-      $("history-box").innerHTML = '<div class="empty-hint">档案读取失败</div>';
-    }
-  }
-
   /* ----------------------------- 事件绑定 ----------------------------- */
   function bind() {
-    document.querySelectorAll(".tab").forEach((t) => {
-      t.addEventListener("click", () => switchTab(t.dataset.tab));
+    $("nav").addEventListener("click", (e) => {
+      const item = e.target.closest(".nav-item");
+      if (item) switchView(item.dataset.view);
     });
 
-    $("btn-scan-empty").addEventListener("click", () => {
-      switchTab("hound");
-      scanEmptyFolders(false);
+    document.querySelectorAll("[data-goto]").forEach((btn) => {
+      btn.addEventListener("click", () => switchView(btn.dataset.goto));
     });
-    $("hound-scan-btn").addEventListener("click", () => scanEmptyFolders(true));
+
+    $("menu-btn").addEventListener("click", openDrawer);
+
+    $("hound-scan-btn").addEventListener("click", scanEmptyFolders);
     $("hound-del-btn").addEventListener("click", deleteEmptyFolders);
     $("hound-cancel-btn").addEventListener("click", cancelHound);
 
-    $("btn-scan-dup").addEventListener("click", () => {
-      switchTab("dedup");
-      scanDuplicates(false);
-    });
-    $("dedup-scan-btn").addEventListener("click", () => scanDuplicates(true));
+    $("dedup-scan-btn").addEventListener("click", scanDuplicates);
     $("dedup-wash-btn").addEventListener("click", resolveDuplicates);
     $("dedup-cancel-btn").addEventListener("click", cancelDedup);
 
@@ -489,9 +550,8 @@
       $("log-box").replaceChildren();
       state.lastLogText = "\u0000-cleared";
     });
-    $("btn-refresh-history").addEventListener("click", loadHistory);
 
-    // 事件委托：点击任何带 data-copy 的元素即复制
+    // 委托：点击带 data-copy 的元素即复制
     document.addEventListener("click", (e) => {
       const el = e.target.closest("[data-copy]");
       if (!el) return;
@@ -499,19 +559,31 @@
       copyText(el.dataset.copy, el.classList.contains("chip") ? null : el);
     });
 
-    // Esc 关闭弹窗
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !$("modal").hidden) $("modal-cancel").click();
+      if (e.key === "Escape") {
+        if (!$("modal").hidden) $("modal-cancel").click();
+        else closeDrawer();
+      }
+    });
+
+    window.addEventListener("hashchange", () => {
+      switchView(location.hash.replace("#", "") || "overview");
+    });
+
+    window.addEventListener("resize", () => {
+      if (window.innerWidth > 900) closeDrawer();
     });
   }
 
   /* ----------------------------- 启动 ----------------------------- */
   function start() {
     bind();
+    switchView(location.hash.replace("#", "") || "overview");
     fetchLogs();
-    loadHistory();
     setInterval(fetchLogs, 2000);
-    setInterval(loadHistory, 60000);
+    setInterval(() => {
+      if (state.currentView === "overview") loadStatus();
+    }, 15000);
   }
 
   if (document.readyState === "loading") {

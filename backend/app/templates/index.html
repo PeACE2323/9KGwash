@@ -10,139 +10,213 @@
 <body>
   <div class="bg-aurora" aria-hidden="true"></div>
 
-  <!-- 顶部导航 -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-logo">🌸</div>
-      <div class="brand-text">
-        <h1>9KGwash <span>控制台</span></h1>
-        <p>自动洗板 · 空间猎犬 · 全库查重 · Emby 幽灵防御</p>
-      </div>
-    </div>
-    <div class="topbar-right">
-      <span class="pill pill-version" title="当前版本">{{ version }}</span>
-      <span class="pill {% if dry_run %}pill-warn{% else %}pill-danger{% endif %}" id="mode-pill">
-        {% if dry_run %}DRY RUN 模拟{% else %}实弹武装{% endif %}
-      </span>
-      <a class="icon-btn" href="/api/logs" target="_blank" title="查看原始日志 JSON">API</a>
-    </div>
-  </header>
-
-  <main class="layout">
-    <!-- 左列：配置 + 工具箱 + 档案 -->
-    <section class="col col-left">
-      <div class="card">
-        <div class="card-head">
-          <h2>⚙️ 运行时动态配置</h2>
-          <span id="status-msg" class="status-msg"></span>
-        </div>
-        <form id="config-form" class="form" autocomplete="off">
-          <label class="field">
-            <span>DB 目标 Webhook 地址 (POST)</span>
-            <input type="text" id="db_webhook" value="{{ db_webhook }}" placeholder="http://192.168.x.x:port/webhook">
-          </label>
-          <label class="field">
-            <span>STRM 软件唤醒 Webhook (GET)</span>
-            <input type="text" id="strm_webhook" value="{{ strm_webhook }}" placeholder="http://192.168.x.x:port/api/trigger">
-          </label>
-          <label class="field">
-            <span>运行模式 (洗板开关)</span>
-            <select id="dry_run">
-              <option value="true" {% if dry_run %}selected{% endif %}>🟡 DRY RUN (仅日志模拟，不真删文件)</option>
-              <option value="false" {% if not dry_run %}selected{% endif %}>🔴 实弹武装 (删除文件与元数据)</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>去除番号前置数字 (双向匹配通吃)</span>
-            <select id="ignore_digits">
-              <option value="false" {% if not ignore_digits %}selected{% endif %}>❌ 关闭 (精准匹配原名)</option>
-              <option value="true" {% if ignore_digits %}selected{% endif %}>✅ 开启 (前置数字与标准番号双向互洗，且转发去除前缀)</option>
-            </select>
-          </label>
-          <button type="submit" class="btn btn-primary btn-block">💾 保存修改 (实时生效)</button>
-        </form>
-      </div>
-
-      <div class="card">
-        <div class="card-head"><h2>🧰 工具箱</h2></div>
-        <div class="tool-grid">
-          <button class="tool-btn" id="btn-scan-empty">🔍 查找本地空壳文件夹</button>
-          <button class="tool-btn" id="btn-scan-dup">🔍 启动本地媒体查重</button>
-        </div>
-        <div class="hint">扫描结果会实时推送到右侧日志，并自动切换到对应标签页。</div>
-      </div>
-
-      <div class="card card-grow">
-        <div class="card-head">
-          <h2>🛡️ 洗板档案 <span class="badge" id="history-count">-</span></h2>
-          <button class="btn btn-ghost btn-xs" id="btn-refresh-history">刷新</button>
-        </div>
-        <div class="history-box" id="history-box">
-          <div class="empty-hint">正在读取 wash_history.json...</div>
+  <div class="shell">
+    <!-- ==================== 左侧导航 ==================== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-logo">🌸</div>
+        <div class="brand-text">
+          <h1>9KGwash</h1>
+          <p>自动洗板控制台</p>
         </div>
       </div>
-    </section>
 
-    <!-- 中列：任务面板 -->
-    <section class="col col-mid">
-      <div class="card card-grow card-fill">
-        <div class="card-head">
-          <h2>🧽 洗板任务</h2>
-        </div>
-        <div class="tabs" role="tablist">
-          <button class="tab active" data-tab="hound" role="tab">🧽 空间猎犬</button>
-          <button class="tab" data-tab="dedup" role="tab">🔍 影片查重</button>
-        </div>
+      <nav class="nav" id="nav">
+        <span class="nav-group">概览</span>
+        <button class="nav-item active" data-view="overview">
+          <span class="nav-icon">📊</span><span class="nav-label">运行概览</span>
+        </button>
 
-        <!-- 空间猎犬 -->
-        <div class="tab-panel" id="panel-hound">
-          <div class="panel-toolbar">
-            <button class="btn btn-ghost btn-sm" id="hound-scan-btn">重新扫描</button>
-            <span class="hint" id="hound-count"></span>
-          </div>
-          <div class="result-box" id="hound-results">
-            <div class="empty-hint">暂无空壳扫描数据<br><small>点击左侧「查找本地空壳文件夹」排查本地无 STRM 的残留孤儿目录</small></div>
-          </div>
-          <div class="panel-actions" id="hound-actions" hidden>
-            <button class="btn btn-danger" id="hound-del-btn">🗑️ 确认删除全部</button>
-            <button class="btn btn-ghost" id="hound-cancel-btn">取消</button>
-          </div>
-        </div>
+        <span class="nav-group">洗板任务</span>
+        <button class="nav-item" data-view="hound">
+          <span class="nav-icon">🧽</span><span class="nav-label">空间猎犬</span>
+        </button>
+        <button class="nav-item" data-view="dedup">
+          <span class="nav-icon">🔍</span><span class="nav-label">影片查重</span>
+        </button>
 
-        <!-- 影片查重 -->
-        <div class="tab-panel" id="panel-dedup" hidden>
-          <div class="panel-toolbar">
-            <button class="btn btn-ghost btn-sm" id="dedup-scan-btn">重新扫描</button>
-            <span class="hint" id="dedup-count"></span>
-          </div>
-          <div class="result-box" id="dedup-results">
-            <div class="empty-hint">暂无查重数据<br><small>支持标准纯番号严格比对及前置数字双向归一化互查</small></div>
-          </div>
-          <div class="panel-actions" id="dedup-actions" hidden>
-            <button class="btn btn-danger" id="dedup-wash-btn">⚡ 一键洗板清理</button>
-            <button class="btn btn-ghost" id="dedup-cancel-btn">取消</button>
-          </div>
-        </div>
+        <span class="nav-group">系统</span>
+        <button class="nav-item" data-view="config">
+          <span class="nav-icon">⚙️</span><span class="nav-label">运行配置</span>
+        </button>
+        <button class="nav-item" data-view="logs">
+          <span class="nav-icon">📡</span><span class="nav-label">活动日志</span>
+          <span class="nav-dot" id="nav-log-dot" title="日志实时更新中"></span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="foot-mode" id="foot-mode">{{ 'DRY RUN 模拟' if dry_run else '实弹武装' }}</div>
+        <div class="foot-version">{{ version }}</div>
       </div>
-    </section>
+    </aside>
 
-    <!-- 右列：实时日志 -->
-    <section class="col col-right">
-      <div class="card card-fill">
-        <div class="card-head">
-          <h2>📡 洗板活动日志 (Live)</h2>
-          <div class="log-tools">
-            <span class="live-dot" id="log-indicator">实时监控中</span>
-            <button class="btn btn-ghost btn-xs" id="pause-btn">⏸️ 暂停</button>
-            <button class="btn btn-ghost btn-xs" id="clear-btn">清屏</button>
-          </div>
+    <!-- ==================== 右侧内容区 ==================== -->
+    <main class="main">
+      <header class="topbar">
+        <button class="menu-btn" id="menu-btn" aria-label="切换导航">☰</button>
+        <div class="topbar-title">
+          <h2 id="view-title">运行概览</h2>
+          <p id="view-desc">当前网关状态与运行模式</p>
         </div>
-        <div class="log-box" id="log-box">正在建立安全连接，拉取系统日志...</div>
+        <div class="topbar-right">
+          <span class="pill {% if dry_run %}pill-warn{% else %}pill-danger{% endif %}" id="mode-pill">
+            {{ 'DRY RUN 模拟' if dry_run else '实弹武装' }}
+          </span>
+        </div>
+      </header>
+
+      <div class="content" id="content">
+        <!-- ---------- 视图：运行概览 ---------- -->
+        <section class="view active" id="view-overview">
+          <div class="stat-grid">
+            <div class="card stat">
+              <div class="stat-label">运行模式</div>
+              <div class="stat-value" id="stat-mode">-</div>
+              <div class="stat-hint">网页可随时热切换</div>
+            </div>
+            <div class="card stat">
+              <div class="stat-label">监听目录</div>
+              <div class="stat-value" id="stat-watched">-</div>
+              <div class="stat-hint">WATCHED_DIRS</div>
+            </div>
+            <div class="card stat">
+              <div class="stat-label">网盘挂载</div>
+              <div class="stat-value" id="stat-mount">-</div>
+              <div class="stat-hint" id="stat-mount-path">-</div>
+            </div>
+            <div class="card stat">
+              <div class="stat-label">元数据目录</div>
+              <div class="stat-value" id="stat-meta">-</div>
+              <div class="stat-hint" id="stat-meta-path">-</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>🔌 监听路径状态</h2></div>
+            <div class="path-list" id="path-list">
+              <div class="empty-hint">正在读取运行状态...</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>⚡ 快捷操作</h2></div>
+            <div class="action-row">
+              <button class="btn btn-ghost" data-goto="hound">🧽 去扫描空壳目录</button>
+              <button class="btn btn-ghost" data-goto="dedup">🔍 去做影片查重</button>
+              <button class="btn btn-ghost" data-goto="config">⚙️ 去修改配置</button>
+              <button class="btn btn-ghost" data-goto="logs">📡 查看实时日志</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 视图：空间猎犬 ---------- -->
+        <section class="view" id="view-hound">
+          <div class="card card-fill">
+            <div class="card-head">
+              <h2>🧽 空间猎犬</h2>
+              <div class="head-tools">
+                <span class="hint-inline" id="hound-count"></span>
+                <button class="btn btn-primary btn-sm" id="hound-scan-btn">🔍 开始扫描</button>
+              </div>
+            </div>
+            <p class="view-tip">排查本地「没有 STRM」的残留空壳目录，可一键清除。扫描进度会实时输出到活动日志。</p>
+            <div class="result-box" id="hound-results">
+              <div class="empty-hint">暂无空壳扫描数据<br><small>点击右上角「开始扫描」</small></div>
+            </div>
+            <div class="panel-actions" id="hound-actions" hidden>
+              <button class="btn btn-danger" id="hound-del-btn">🗑️ 确认删除全部</button>
+              <button class="btn btn-ghost" id="hound-cancel-btn">取消</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 视图：影片查重 ---------- -->
+        <section class="view" id="view-dedup">
+          <div class="card card-fill">
+            <div class="card-head">
+              <h2>🔍 影片查重</h2>
+              <div class="head-tools">
+                <span class="hint-inline" id="dedup-count"></span>
+                <button class="btn btn-primary btn-sm" id="dedup-scan-btn">🔍 开始查重</button>
+              </div>
+            </div>
+            <p class="view-tip">支持标准纯番号严格比对，以及前置数字双向归一化互查。👑 为保留的王者版本。</p>
+            <div class="result-box" id="dedup-results">
+              <div class="empty-hint">暂无查重数据<br><small>点击右上角「开始查重」</small></div>
+            </div>
+            <div class="panel-actions" id="dedup-actions" hidden>
+              <button class="btn btn-danger" id="dedup-wash-btn">⚡ 一键洗板清理</button>
+              <button class="btn btn-ghost" id="dedup-cancel-btn">取消</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 视图：运行配置 ---------- -->
+        <section class="view" id="view-config">
+          <div class="card">
+            <div class="card-head">
+              <h2>⚙️ 运行时动态配置</h2>
+              <span id="status-msg" class="status-msg"></span>
+            </div>
+            <form id="config-form" class="form" autocomplete="off">
+              <label class="field">
+                <span>DB 目标 Webhook 地址 (POST)</span>
+                <input type="text" id="db_webhook" value="{{ db_webhook }}" placeholder="http://192.168.x.x:port/webhook">
+              </label>
+              <label class="field">
+                <span>STRM 软件唤醒 Webhook (GET)</span>
+                <input type="text" id="strm_webhook" value="{{ strm_webhook }}" placeholder="http://192.168.x.x:port/api/trigger">
+              </label>
+              <label class="field">
+                <span>运行模式 (洗板开关)</span>
+                <select id="dry_run">
+                  <option value="true" {% if dry_run %}selected{% endif %}>🟡 DRY RUN (仅日志模拟，不真删文件)</option>
+                  <option value="false" {% if not dry_run %}selected{% endif %}>🔴 实弹武装 (删除文件与元数据)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>去除番号前置数字 (双向匹配通吃)</span>
+                <select id="ignore_digits">
+                  <option value="false" {% if not ignore_digits %}selected{% endif %}>❌ 关闭 (精准匹配原名)</option>
+                  <option value="true" {% if ignore_digits %}selected{% endif %}>✅ 开启 (前置数字与标准番号双向互洗，且转发去除前缀)</option>
+                </select>
+              </label>
+              <button type="submit" class="btn btn-primary btn-block">💾 保存修改 (实时生效)</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>📁 路径配置（只读）</h2></div>
+            <p class="view-tip">以下路径来自 <code>/config/config.json</code>，需修改文件或使用环境变量后重启容器生效。</p>
+            <div class="kv-list">
+              <div class="kv"><span>MOUNT_BASE_PATH</span><div class="kv-val" id="cfg-mount">-</div></div>
+              <div class="kv"><span>METADATA_BASE_PATH</span><div class="kv-val" id="cfg-meta">-</div></div>
+              <div class="kv"><span>WATCHED_DIRS</span><div class="kv-val" id="cfg-watched">-</div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 视图：活动日志 ---------- -->
+        <section class="view" id="view-logs">
+          <div class="card card-fill log-card">
+            <div class="card-head">
+              <h2>📡 洗板活动日志</h2>
+              <div class="log-tools">
+                <span class="live-dot" id="log-indicator">实时监控中</span>
+                <button class="btn btn-ghost btn-xs" id="pause-btn">⏸️ 暂停</button>
+                <button class="btn btn-ghost btn-xs" id="clear-btn">清屏</button>
+              </div>
+            </div>
+            <div class="log-box" id="log-box">正在建立安全连接，拉取系统日志...</div>
+          </div>
+        </section>
       </div>
-    </section>
-  </main>
+    </main>
+  </div>
 
   <div id="toast" class="toast"><span>📋</span><span id="toast-msg">已复制</span></div>
+
   <div id="modal" class="modal" hidden>
     <div class="modal-card">
       <h3 id="modal-title">确认操作</h3>
