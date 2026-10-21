@@ -314,8 +314,10 @@ check("王者权重最高", grp["files"][0]["weight"] == 2, [f["weight"] for f i
 print("\n--- D2. 查重洗板：跨目录整目录粉碎 ---")
 # 用全新番号 + 干净目录，确保「谁当王者」由权重唯一决定（权重2 胜 权重0）
 meta_strm = os.path.join(META, "9KG", "STRM")
-mm = MOUNT.replace("\\", "/")
-mount_strm = mm + "/9KG/STRM"  # 与 /metadata/9KG/STRM 推导一致，便于验证网盘侧粉碎
+# 与 mk_mount 使用同一拼装方式，避免 Windows 反斜杠/Linux 正斜杠差异导致路径不一致。
+# 推导链路：meta_dir = mount_dir.replace(MOUNT, META).replace("/115open/", "/")
+# => MOUNT + STRM + folder  =>  META + "9KG/STRM" + folder，两侧主干名一致即可命中。
+mount_strm = os.path.join(MOUNT, STRM)
 
 
 def _mk(p, files):
