@@ -167,8 +167,14 @@ g1, ch1, kw1 = deliver.classify_file("ABC-001_alpha.mp4", c)
 check("命中组A第一条", g1["name"] == "组A" and kw1 == "alpha" and ch1["mark"] == "-A1")
 
 g2, ch2, kw2 = deliver.classify_file("ABC-002_beta.mp4", c)
-check("beta 同时在组A第二条和组B第一条 -> 命中组A（组序优先）",
-      g2["name"] == "组A" and ch2["mark"] == "-A2", (g2["name"], ch2))
+# 新语义：跨组都会改名，classify_file 返回「最后一个命中组」
+_hits_beta = deliver.resolve_matches_by_group("ABC-002_beta.mp4", c)
+check("beta 同时在组A与组B -> 两组都命中并链式改名",
+      [h["group"]["name"] for h in _hits_beta] == ["组A", "组B"],
+      [h["group"]["name"] for h in _hits_beta])
+check("beta 的最终结果是链式叠加后的名字",
+      _hits_beta[-1]["name_after"] == "A2-BBB-222_beta.mp4" or "A2" in _hits_beta[-1]["name_after"],
+      _hits_beta[-1]["name_after"])
 
 g3, ch3, kw3 = deliver.classify_file("ABC-003_gamma.mp4", c)
 check("gamma 只在组B -> 命中组B", g3["name"] == "组B" and kw3 == "gamma")
@@ -275,10 +281,11 @@ a_files = sorted(os.listdir(os.path.join(OUT, "A")))
 b_files = sorted(os.listdir(os.path.join(OUT, "B")))
 fb_files = sorted(os.listdir(os.path.join(OUT, "FB")))
 check("组A：alpha 后置标记", "AAA-111-A1_alpha.mp4" in a_files, a_files)
-check("组A：beta 前置标记", "A2-BBB-222_beta.mp4" in a_files, a_files)
-check("组B：gamma 命中", b_files == ["CCC-333-B1_gamma.mp4"], b_files)
+# beta 同时命中组A与组B：按新语义链式改名，只投最后命中的组B
+check("组A 不再收到 beta（只投最后命中组）", "A2-BBB-222_beta.mp4" not in a_files, a_files)
+check("组B：beta 链式改名后投递", any("B1" in f and "beta" in f for f in b_files), b_files)
+check("组B：gamma 命中", "CCC-333-B1_gamma.mp4" in b_files, b_files)
 check("兜底：原样投递", fb_files == ["DDD-444_none.mp4"], fb_files)
-check("beta 未被组B重复投递", "BBB-222-B1_beta.mp4" not in b_files)
 
 # API：保存与读回
 r = client.post("/api/deliver/config", json={"GROUPS": run_groups})

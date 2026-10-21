@@ -60,6 +60,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_rule_groups
 
+      - name: 运行跨组链式改名测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_chain_rename
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

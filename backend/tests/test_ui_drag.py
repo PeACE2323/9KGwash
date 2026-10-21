@@ -69,8 +69,9 @@ print("\n=== 4. 欧美/兜底组隐藏标记 ===")
 check("CSS 有 no-mark 规则", ".group-item.no-mark .child-mark" in css)
 check("JS 按类型切换 no-mark", 'classList.toggle("no-mark"' in js)
 
-print("\n=== 5. 优先级提示 ===")
-check("页面说明组优先于组内", "先看组的顺序" in html)
+print("\n=== 5. 优先级说明文案 ===")
+check("页面说明同组只改一次", "只按第一个命中的子规则改名一次" in html)
+check("页面说明跨组链式改名", "逐组链式改名" in html)
 
 print("\n=== 6. 交互链路模拟 ===")
 

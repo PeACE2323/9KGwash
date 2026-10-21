@@ -175,36 +175,30 @@ def preview():
     results = []
     for name in files:
         name = str(name)
-        group, child, kw = deliver.classify_file(name, cfg)
+        # 跨组链式改名：取全部命中组，最终结果来自最后一组
+        hits = deliver.resolve_matches_by_group(name, cfg)
         fallback = False
-        if not group:
-            group, child = deliver.find_fallback_group(cfg)
-            fallback = bool(group)
-        child = child or {}
 
+        if hits:
+            last = hits[-1]
+            group, child = last["group"], last["child"]
+            output = last["name_after"]
+            kw = last["keyword"]
+            reason = ""
+        else:
+            group, child = deliver.find_fallback_group(cfg)
+            child = child or {}
+            fallback = bool(group)
+            output = name
+            kw = None
+            reason = "" if group else "没有可用规则"
+
+        # 若命中的组缺失格式（理论不会发生，因匹配阶段已校验），补一条提示
         kind = (group or {}).get("kind", "jav")
         mark = child.get("mark", "") or ""
         position = child.get("mark_position", "after")
-
         jav_info = naming.find_fanhao(name)
         west_info = naming.find_western(name)
-
-        output = name
-        reason = ""
-        if not group:
-            reason = "没有可用规则"
-        elif kind == "jav":
-            if jav_info and mark:
-                output = naming.apply_mark_to_fanhao(name, mark, position)
-            elif not jav_info:
-                reason = "不含日本番号，实际执行时会被跳过"
-        elif kind == "western":
-            # 欧美规则不提供标记功能，预览时原样返回
-            if not west_info:
-                reason = "不含「年.月.日」，实际执行时会被跳过"
-        elif kind == "other":
-            if mark:
-                output = naming.apply_mark(name, mark, position, prefer_fanhao=False)
 
         results.append(
             {
@@ -221,6 +215,17 @@ def preview():
                 "western_date": west_info["date"] if west_info else None,
                 "output": output,
                 "reason": reason,
+                # 链式改名轨迹：跨组时会有多条
+                "chain": [
+                    {
+                        "group": h["group"].get("name"),
+                        "keyword": h["keyword"],
+                        "before": h["name_before"],
+                        "after": h["name_after"],
+                    }
+                    for h in hits
+                ],
+                "hit_count": len(hits),
             }
         )
     return jsonify({"success": True, "results": results})

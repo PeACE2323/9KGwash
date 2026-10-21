@@ -311,37 +311,87 @@ def iter_files(root: str, recursive: bool):
 # ---------------------------------------------------------------------------
 # 核心：处理单个文件
 # ---------------------------------------------------------------------------
-def classify_file(filename: str, cfg: dict) -> tuple[dict | None, dict | None, str | None]:
-    """按「组序 -> 组内子规则序」匹配，命中即停。
+def resolve_matches_by_group(filename: str, cfg: dict) -> list[dict]:
+    """解析一个文件名命中的所有组，并按组序做**链式改名**。
 
-    返回 (命中的组, 命中的子规则, 命中的关键字)。
-    - jav / western / other：需要关键字命中，且格式需与该组类型匹配
-      （命中但格式不符 -> 视为不适用，继续尝试组内下一条 / 下一个组）
-    - fallback：不参与关键字匹配，仅当以上全部未命中时兜底
+    语义（与用户约定一致）：
+      - 同一组内：只取「第一条命中」的子规则，改一次名，组内不叠加；
+      - 跨组：后一组基于**前一组改名后的结果**继续改名（链式累加）；
+      - 最终只投递「最后一个命中的组」那一份，前面各组的改名只影响最终文件名。
+
+    返回按组序排列的命中列表，每项:
+        {group, child, keyword, name_before, name_after}
+    未命中任何组返回空列表。
     """
-    for group, child in iter_group_children(cfg):
+    hits: list[dict] = []
+    current = filename
+
+    for group in cfg.get("GROUPS", []):
+        if not group.get("enabled", True):
+            continue
         kind = group.get("kind")
         if kind == "fallback":
             continue
 
-        kw = naming.match_any_keyword(filename, child.get("keywords", []))
-        if not kw:
+        picked = None
+        for child in group.get("children", []):
+            if not child.get("enabled", True):
+                continue
+            kw = naming.match_any_keyword(current, child.get("keywords", []))
+            if not kw:
+                continue
+
+            # 类型适用性校验
+            if kind == "jav" and not naming.find_fanhao(current):
+                logger.info(
+                    f"   [-] ↩️ [投递] 组[{group.get('name')}]命中关键词[{kw}]但无日本番号，跳过该子规则"
+                )
+                continue
+            if kind == "western" and not naming.find_western(current):
+                logger.info(
+                    f"   [-] ↩️ [投递] 组[{group.get('name')}]命中厂牌[{kw}]但无欧美日期，跳过该子规则"
+                )
+                continue
+
+            picked = (child, kw)
+            break  # 组内只取第一条命中的子规则
+
+        if not picked:
             continue
 
-        # 类型适用性校验：命中了关键字但格式对不上，交给后续规则
-        if kind == "jav" and not naming.find_fanhao(filename):
-            logger.info(
-                f"   [-] ↩️ [投递] 组[{group.get('name')}]子规则命中关键词[{kw}]但无日本番号，继续下一条"
-            )
-            continue
-        if kind == "western" and not naming.find_western(filename):
-            logger.info(
-                f"   [-] ↩️ [投递] 组[{group.get('name')}]子规则命中厂牌[{kw}]但无欧美日期，继续下一条"
-            )
-            continue
+        child, kw = picked
+        before = current
+        mark = child.get("mark") or ""
+        position = child.get("mark_position", "after")
+        after = before
 
-        return group, child, kw
-    return None, None, None
+        if mark:
+            if kind == "jav":
+                after = naming.apply_mark_to_fanhao(before, mark, position)
+            elif kind == "other":
+                after = naming.apply_mark(before, mark, position, prefer_fanhao=False)
+
+        hits.append(
+            {
+                "group": group,
+                "child": child,
+                "keyword": kw,
+                "name_before": before,
+                "name_after": after,
+            }
+        )
+        current = after
+
+    return hits
+
+
+def classify_file(filename: str, cfg: dict) -> tuple[dict | None, dict | None, str | None]:
+    """返回最后命中的组（用于投递）。保留旧调用签名。"""
+    hits = resolve_matches_by_group(filename, cfg)
+    if not hits:
+        return None, None, None
+    last = hits[-1]
+    return last["group"], last["child"], last["keyword"]
 
 
 def find_fallback_group(cfg: dict) -> tuple[dict | None, dict | None]:
@@ -392,22 +442,55 @@ def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
         result["reason"] = "非媒体文件"
         return result
 
-    # ---- 3. 按「组序 -> 组内序」匹配 ----
-    group, child, kw = classify_file(filename, cfg)
+    # ---- 3. 解析所有命中组，并按组序链式改名 ----
+    hits = resolve_matches_by_group(filename, cfg)
     fallback = False
 
-    # 兜底：所有关键字规则都没命中时，交给兜底组
-    if not group:
-        group, child = find_fallback_group(cfg)
-        if group:
+    # 兜底：所有关键字组都没命中时，交给兜底组（兜底不改名）
+    if not hits:
+        fb_group, fb_child = find_fallback_group(cfg)
+        if fb_group:
             fallback = True
             result["reason"] = "未命中关键字，走兜底规则"
+            group, child = fb_group, fb_child or {}
+            new_name = filename
         else:
             result["reason"] = "未命中任何关键字规则"
             return result
+    else:
+        last = hits[-1]
+        group = last["group"]
+        child = last["child"]
+        # 链式改名的最终结果
+        new_name = last["name_after"]
+
+        # 各组命中与改名过程写入日志，便于追溯
+        for h in hits:
+            hg, hc = h["group"], h["child"]
+            hkind = hg.get("kind")
+            hmark = hc.get("mark") or ""
+            hpos = hc.get("mark_position", "after")
+            changed = h["name_before"] != h["name_after"]
+            if hmark and changed:
+                pos_label = {
+                    "jav": ("番号前" if hpos == "before" else "番号后"),
+                    "other": ("文件名前" if hpos == "before" else "文件名后"),
+                }.get(hkind, "")
+                logger.info(
+                    f"   [-] 🏷️ [投递] 组[{hg.get('name')}]命中关键词[{h['keyword']}] "
+                    f"标记={hmark}({pos_label})"
+                )
+            else:
+                logger.info(f"   [-] 🏷️ [投递] 组[{hg.get('name')}]命中关键词[{h['keyword']}]（不改名）")
+
+        if len(hits) > 1:
+            logger.info(
+                f"   [-] 🔗 [投递] 跨组命中 {len(hits)} 个组，已链式改名，最终投递组[{group.get('name')}]"
+            )
 
     child = child or {}
     group_name = group.get("name", "")
+    kind = group.get("kind")
 
     target_root = group.get("target_dir", "").strip()
     if not target_root:
@@ -415,52 +498,24 @@ def process_one_file(path: str, cfg: dict, dry_run: bool = False) -> dict:
         logger.warning(f"   [-] ⚠️ [投递] {filename} 命中规则组[{group_name}]但未配置目标目录，跳过")
         return result
 
-    new_name = filename
-    final_dir = target_root
-    kind = group.get("kind")
-    mark = child.get("mark") or ""
-    position = child.get("mark_position", "after")
-
-    if kind == "jav":
-        info = naming.find_fanhao(filename)
-        if not info:
-            result["reason"] = f"命中关键词[{kw}]但文件名不含日本番号，不投递"
-            logger.warning(f"   [-] ⚠️ [投递] {filename} 命中JAV规则组但未识别到番号，跳过")
-            return result
-        # 未填写标记则不改名；有标记则按 mark_position 决定加在番号前还是后
-        if mark:
-            new_name = naming.apply_mark_to_fanhao(filename, mark, position)
-        pos_label = "番号前" if position == "before" else "番号后"
-        logger.info(
-            f"   [-] 🏷️ [投递] 组[{group_name}]命中关键词[{kw}] 番号={info['fanhao']} "
-            f"标记={mark or '无'}" + (f"({pos_label})" if mark else "")
-        )
-
-    elif kind == "western":
-        info = naming.find_western(filename)
-        if not info:
-            result["reason"] = f"命中厂牌[{kw}]但文件名不含「年.月.日」，不投递"
-            logger.warning(f"   [-] ⚠️ [投递] {filename} 命中欧美规则组但未识别到日期，跳过")
-            return result
-        # 欧美规则只做厂牌匹配与投递，不提供标记功能
-        logger.info(f"   [-] 🏷️ [投递] 组[{group_name}]命中厂牌[{kw}] 日期={info['date']}")
-
-    elif kind == "fallback":
+    if kind == "fallback":
         logger.info(f"   [-] 🏷️ [投递] 未命中任何关键字，执行兜底组[{group_name}]")
 
-    else:  # other：普通关键字规则，支持在文件名前/后加标记
-        if mark:
-            new_name = naming.apply_mark(filename, mark, position, prefer_fanhao=False)
-            pos_label = "文件名前" if position == "before" else "文件名后"
-            logger.info(
-                f"   [-] 🏷️ [投递] 组[{group_name}]命中关键词[{kw}] 标记={mark}({pos_label})"
-            )
-        else:
-            logger.info(f"   [-] 🏷️ [投递] 组[{group_name}]命中关键词[{kw}]")
+    final_dir = target_root
 
     result["new_name"] = new_name
     result["rule"] = group_name
     result["fallback"] = fallback
+    # 记录链式改名轨迹（供前端/日志展示）
+    result["chain"] = [
+        {
+            "group": h["group"].get("name"),
+            "keyword": h["keyword"],
+            "before": h["name_before"],
+            "after": h["name_after"],
+        }
+        for h in hits
+    ]
 
     # ---- 4. 执行投递 ----
     action = group.get("action", "move")

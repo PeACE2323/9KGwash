@@ -234,7 +234,8 @@
               </div>
             </div>
             <p class="view-tip">
-              <strong>优先级：先看组的顺序，再看组内子规则的顺序，命中即停。</strong>
+              <strong>同一组内：只按第一个命中的子规则改名一次。</strong>
+              <strong>不同组都命中时：逐组链式改名（后一组在前一组结果上继续改），最终只投递最后命中的那一组。</strong>
               拖动组头 ⠿ 调整组的先后，组内子规则用 ▲▼ 调整。
             </p>
             <div id="group-list" class="group-list">
