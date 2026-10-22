@@ -131,6 +131,62 @@ def get_log_categories():
     )
 
 # ---------------------------------------------------------------------------
+# 洗板权重档位（可拖动排序）
+# ---------------------------------------------------------------------------
+@bp.route("/api/weight", methods=["GET"])
+def get_weight_order():
+    """返回当前权重档位顺序与说明，供前端渲染可拖动面板。"""
+    order = config.get_weight_order()
+    wmap = config.get_weight_map()
+    return jsonify(
+        {
+            "success": True,
+            "order": order,
+            "weights": wmap,
+            "tiers": [
+                {
+                    "key": t,
+                    "label": config.WEIGHT_TIER_LABELS.get(t, t),
+                    "desc": config.WEIGHT_TIER_DESC.get(t, ""),
+                    "weight": wmap.get(t, 0),
+                }
+                for t in order
+            ],
+            "default_order": config.DEFAULT_WEIGHT_ORDER,
+        }
+    )
+
+
+@bp.route("/api/weight", methods=["POST"])
+def update_weight_order():
+    """保存权重档位顺序（实时生效，无需重启）。"""
+    try:
+        data = request.get_json(silent=True) or {}
+        raw = data.get("order")
+        if not isinstance(raw, list) or not raw:
+            return jsonify({"success": False, "error": "order 必须是非空数组"}), 400
+
+        new_order = config.normalize_weight_order(raw)
+        ok, res = config.save_config({"WEIGHT_ORDER": new_order})
+        if not ok:
+            return jsonify({"success": False, "error": str(res)}), 500
+
+        # 立即应用到运行期，无需重启
+        config.reload_config()
+
+        wmap = config.get_weight_map()
+        logger.info(
+            "⚖️ [权重] 档位顺序已更新为 "
+            + " > ".join(new_order)
+            + " | 权重值 "
+            + ", ".join(f"{k}={v}" for k, v in wmap.items())
+        )
+        return jsonify({"success": True, "order": new_order, "weights": wmap})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # 配置热更新
 # ---------------------------------------------------------------------------
 @bp.route("/api/config", methods=["POST"])

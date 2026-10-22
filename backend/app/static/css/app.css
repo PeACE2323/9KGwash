@@ -1332,3 +1332,122 @@ select option { background: #121826; }
 
 /* 标签页、胶囊按钮同理 */
 .log-tab::first-letter { margin-right: 0.24em; }
+
+/* ==========================================================================
+   洗板权重顺序（可拖动排序）
+   ========================================================================== */
+.weight-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.weight-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: rgba(13, 18, 30, 0.85);
+  cursor: grab;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.12s ease;
+  user-select: none;
+}
+.weight-item:hover { border-color: rgba(148, 163, 184, 0.34); }
+.weight-item:active { cursor: grabbing; }
+
+.weight-item.is-top {
+  border-color: rgba(236, 72, 153, 0.45);
+  background: linear-gradient(90deg, rgba(236, 72, 153, 0.13), rgba(13, 18, 30, 0.85) 55%);
+}
+.weight-item.is-dragging {
+  opacity: 0.45;
+  border-style: dashed;
+  border-color: var(--pink);
+}
+
+.weight-grip {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: grab;
+}
+.weight-item:hover .weight-grip { color: var(--pink); }
+
+.weight-rank {
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: rgba(236, 72, 153, 0.16);
+  border: 1px solid rgba(236, 72, 153, 0.35);
+  color: var(--pink-soft);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.weight-item.is-top .weight-rank {
+  background: var(--pink);
+  border-color: var(--pink);
+  color: #fff;
+}
+
+.weight-badge {
+  flex: 0 0 auto;
+  min-width: 34px;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-family: var(--mono);
+}
+.w-badge-uc { color: #f9a8d4; }
+.w-badge-c { color: #67e8f9; }
+.w-badge-u { color: #fcd34d; }
+.w-badge-normal { color: var(--text-dim); }
+
+.weight-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.weight-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.weight-desc {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weight-val {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.weight-move { display: inline-flex; gap: 2px; flex: 0 0 auto; }
+.weight-move .btn { padding: 2px 5px; font-size: 9px; line-height: 1; }
+
+@media (max-width: 640px) {
+  .weight-desc { display: none; }
+  .weight-item { gap: 7px; padding: 8px 9px; }
+}

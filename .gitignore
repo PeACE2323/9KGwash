@@ -37,3 +37,7 @@ gshot/
 9kgwash-cdp/
 9kgwash-shot-profile/
 
+
+# 截图工具的浏览器 profile
+.shots/
+

@@ -81,7 +81,14 @@ def extract_pure_fanhao(text: str, apply_ignore: bool = False) -> str:
 def get_weight_and_fanhao(filename: str):
     """返回 (root_fanhao, weight, is_part)。
 
-    weight: 3=中字+无码/破解, 2=仅中字, 1=仅无码/破解, 0=普通
+    权重由「档位顺序」决定，可在前端拖动调整。
+    默认档位（高 -> 低）：UC > C > U > NORMAL，对应权重 3 / 2 / 1 / 0。
+
+    档位含义：
+        UC      = 中字 + 无码/破解（同时含 C 与 U 标记）
+        C       = 仅中字
+        U       = 仅无码/破解
+        NORMAL  = 普通，无上述标记
     """
     basename = os.path.splitext(filename)[0]
     canonical, raw, _ = parse_fanhao_info(basename)
@@ -92,17 +99,22 @@ def get_weight_and_fanhao(filename: str):
         has_c = bool(_HAS_C_RE.search(upper_base))
         has_u = bool(_HAS_U_RE.search(upper_base))
 
-        weight = 0
+        # 判定所属档位
         if has_c and has_u:
-            weight = 3
+            tier = "UC"
         elif has_c:
-            weight = 2
+            tier = "C"
         elif has_u:
-            weight = 1
+            tier = "U"
+        else:
+            tier = "NORMAL"
+
+        weight = config.get_weight_for_tier(tier)
 
         root_fanhao = canonical if config.get_ignore_leading_digits() else raw
         return root_fanhao, weight, is_part
-    return basename.strip(), 0, False
+    # 无番号：不参与洗板对决，权重固定为最低，不受档位拖动影响
+    return basename.strip(), -1, False
 
 
 def version_hash(file_info: dict) -> str:

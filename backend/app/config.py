@@ -28,6 +28,27 @@ DEFAULT_CONFIG = {
     "DB_ONLINE_WEBHOOK": "",
     "STRM_WEBHOOK": "",
     "IGNORE_LEADING_DIGITS": True,
+    # 洗板权重档位顺序（高 -> 低），可在前端拖动调整
+    "WEIGHT_ORDER": ["UC", "C", "U", "NORMAL"],
+}
+
+# ---------------------------------------------------------------------------
+# 洗板权重档位
+# ---------------------------------------------------------------------------
+# 档位固定 4 个，含义不可变，只有「先后顺序」可调。
+WEIGHT_TIERS = ("UC", "U", "C", "NORMAL")
+DEFAULT_WEIGHT_ORDER = ["UC", "C", "U", "NORMAL"]
+WEIGHT_TIER_LABELS = {
+    "UC": "UC · 中字+无码",
+    "C": "C · 中字",
+    "U": "U · 无码/破解",
+    "NORMAL": "普通",
+}
+WEIGHT_TIER_DESC = {
+    "UC": "文件名同时含中字(C)与无码/破解(U)标记",
+    "C": "仅含中字标记（中字/字幕/-C）",
+    "U": "仅含无码/破解标记（无码/破解/流出/-U）",
+    "NORMAL": "不含上述标记的普通版本",
 }
 
 # 只读路径项：这些只能通过 config.json / 环境变量调整，不在 WebUI 热更新范围内
@@ -41,7 +62,37 @@ _runtime = {
     "DB_ONLINE_WEBHOOK": DEFAULT_CONFIG["DB_ONLINE_WEBHOOK"],
     "STRM_WEBHOOK": DEFAULT_CONFIG["STRM_WEBHOOK"],
     "IGNORE_LEADING_DIGITS": DEFAULT_CONFIG["IGNORE_LEADING_DIGITS"],
+    # 档位 -> 权重 的映射（数字越大越优先）
+    "WEIGHT_MAP": {},
 }
+
+
+def normalize_weight_order(raw) -> list[str]:
+    """把任意输入规范为合法且完整的 4 档顺序。
+
+    - 只保留合法档位，去重
+    - 缺失的档位按默认顺序补到末尾（保证永远 4 个）
+    """
+    if isinstance(raw, str):
+        raw = [x.strip() for x in raw.replace("，", ",").split(",")]
+    order = []
+    for t in raw or []:
+        key = str(t).strip().upper()
+        if key in WEIGHT_TIERS and key not in order:
+            order.append(key)
+    for t in DEFAULT_WEIGHT_ORDER:
+        if t not in order:
+            order.append(t)
+    return order
+
+
+def _build_weight_map(order: list[str]) -> dict:
+    """顺序 -> 权重：第一个（最优先）权重最高。
+
+    4 档时为 3 / 2 / 1 / 0，与原有 UC>C>U>普通 完全等价。
+    """
+    n = len(order)
+    return {tier: (n - 1 - idx) for idx, tier in enumerate(order)}
 
 
 def _apply_runtime(conf: dict) -> None:
@@ -49,6 +100,28 @@ def _apply_runtime(conf: dict) -> None:
     _runtime["DB_ONLINE_WEBHOOK"] = conf.get("DB_ONLINE_WEBHOOK", "") or ""
     _runtime["STRM_WEBHOOK"] = conf.get("STRM_WEBHOOK", "") or ""
     _runtime["IGNORE_LEADING_DIGITS"] = bool(conf.get("IGNORE_LEADING_DIGITS", True))
+    order = normalize_weight_order(conf.get("WEIGHT_ORDER"))
+    _runtime["WEIGHT_MAP"] = _build_weight_map(order)
+
+
+def get_weight_order() -> list[str]:
+    """当前生效的权重档位顺序（高 -> 低）。"""
+    with _lock:
+        return list(_config.get("WEIGHT_ORDER") or DEFAULT_WEIGHT_ORDER)
+
+
+def get_weight_map() -> dict:
+    with _lock:
+        m = _runtime.get("WEIGHT_MAP")
+        if not m:
+            m = _build_weight_map(DEFAULT_WEIGHT_ORDER)
+        return dict(m)
+
+
+def get_weight_for_tier(tier: str) -> int:
+    """取某档位的当前权重值；未知档位回退为最低。"""
+    m = get_weight_map()
+    return m.get(str(tier).upper(), 0)
 
 
 def load_config() -> dict:
@@ -61,6 +134,8 @@ def load_config() -> dict:
                 cfg.update(loaded)
         except Exception as e:  # noqa: BLE001 - 与原脚本一致：任何异常都回退默认值
             print(f"配置文件加载失败: {e}，使用默认安全配置。")
+    # 权重档位顺序始终规范为合法的 4 档
+    cfg["WEIGHT_ORDER"] = normalize_weight_order(cfg.get("WEIGHT_ORDER"))
     return cfg
 
 

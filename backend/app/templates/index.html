@@ -279,6 +279,26 @@
           </div>
 
           <div class="card">
+            <div class="card-head">
+              <h2>⚖️ 洗板权重顺序</h2>
+              <div class="head-tools">
+                <span class="status-msg" id="weight-msg"></span>
+                <button class="btn btn-ghost btn-sm" id="weight-reset">恢复默认</button>
+              </div>
+            </div>
+            <p class="view-tip">
+              洗板对决时，<strong>排在上面的档位优先级更高</strong>，权重高者保留、低者被清理。
+              拖动卡片左侧 ⠿ 或点 ▲▼ 调整顺序，保存后<strong>实时生效</strong>。
+            </p>
+            <div id="weight-list" class="weight-list">
+              <div class="empty-hint">正在读取权重配置...</div>
+            </div>
+            <button class="btn btn-primary btn-block" id="weight-save" style="margin-top:12px">
+              💾 保存权重顺序
+            </button>
+          </div>
+
+          <div class="card">
             <div class="card-head"><h2>📁 路径配置（只读）</h2></div>
             <p class="view-tip">以下路径来自 <code>/config/config.json</code>，需修改文件或使用环境变量后重启容器生效。</p>
             <div class="kv-list">
@@ -344,6 +364,24 @@
       </div>
     </div>
   </div>
+
+  <!-- 洗板权重档位模板 -->
+  <template id="weight-tpl">
+    <div class="weight-item" draggable="true">
+      <span class="weight-grip" title="按住拖动调整优先级">⠿</span>
+      <span class="weight-rank"></span>
+      <span class="weight-badge"></span>
+      <span class="weight-text">
+        <span class="weight-label"></span>
+        <span class="weight-desc"></span>
+      </span>
+      <span class="weight-val"></span>
+      <span class="weight-move">
+        <button type="button" class="btn btn-ghost btn-xs weight-up" title="提高优先级">▲</button>
+        <button type="button" class="btn btn-ghost btn-xs weight-down" title="降低优先级">▼</button>
+      </span>
+    </div>
+  </template>
 
   <!-- 规则组卡片模板 -->
   <template id="group-tpl">

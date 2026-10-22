@@ -40,8 +40,13 @@ group_tag = re.search(r'<div class="group-item"[^>]*>', html)
 check("组卡片不带 draggable", bool(group_tag) and "draggable" not in group_tag.group(0),
       group_tag.group(0) if group_tag else "未找到")
 
-check("模板中只有一处 draggable", html.count('draggable="true"') == 1,
-      f"实际 {html.count('draggable=\"true\"')} 处")
+check("模板中 draggable 只出现在预期的拖动源上", html.count('draggable="true"') == 2,
+      f"实际 {html.count('draggable=\"true\"')} 处（规则组把手 + 权重档位）")
+
+# 权重档位：整项可拖（内部没有输入框，不会影响文字选中）
+weight_item = re.search(r'<div class="weight-item"[^>]*>', html)
+check("权重项整体可拖动", bool(weight_item) and 'draggable="true"' in weight_item.group(0),
+      weight_item.group(0) if weight_item else "未找到")
 
 print("\n=== 2. JS 校验拖动来源 ===")
 check("dragstart 用 closest('.group-grip')", 'closest(".group-grip")' in js)

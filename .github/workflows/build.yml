@@ -66,6 +66,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_chain_rename
 
+      - name: 运行权重顺序测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_weight_order
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

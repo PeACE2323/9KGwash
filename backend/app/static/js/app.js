@@ -27,6 +27,7 @@
     busy: false,
     loaded: { overview: false, hound: false, dedup: false, deliver: false },
     deliver: null, // 当前投递配置
+    weightDefault: [], // 权重默认顺序（用于一键恢复）
   };
 
   /* ----------------------------- 通用 ----------------------------- */
@@ -154,6 +155,164 @@
       refreshLogCounts();
     }
     if (name === "deliver") loadDeliverConfig();
+    if (name === "config") loadWeights();
+  }
+
+  /* ----------------------------- 洗板权重 ----------------------------- */
+  const WEIGHT_BADGE = {
+    UC: ["UC", "w-badge-uc"],
+    C: ["C", "w-badge-c"],
+    U: ["U", "w-badge-u"],
+    NORMAL: ["普通", "w-badge-normal"],
+  };
+
+  function weightMsg(text, cls) {
+    const el = $("weight-msg");
+    el.textContent = text || "";
+    el.className = "status-msg" + (cls ? " " + cls : "");
+  }
+
+  /** 收集当前界面上的档位顺序 */
+  function collectWeightOrder() {
+    return [...document.querySelectorAll("#weight-list .weight-item")].map(
+      (n) => n.dataset.tier
+    );
+  }
+
+  /** 按顺序重排序号与权重值显示 */
+  function refreshWeightRanks() {
+    const items = [...document.querySelectorAll("#weight-list .weight-item")];
+    const total = items.length;
+    items.forEach((node, idx) => {
+      node.querySelector(".weight-rank").textContent = idx + 1;
+      node.querySelector(".weight-val").textContent = `权重 ${total - 1 - idx}`;
+      node.classList.toggle("is-top", idx === 0);
+      node.classList.toggle("is-bottom", idx === total - 1);
+      node.querySelector(".weight-up").disabled = idx === 0;
+      node.querySelector(".weight-down").disabled = idx === total - 1;
+    });
+  }
+
+  function renderWeights(data) {
+    const list = $("weight-list");
+    const tpl = $("weight-tpl");
+    list.innerHTML = "";
+
+    const tiers = data.tiers || [];
+    if (!tiers.length) {
+      list.innerHTML = '<div class="empty-hint">没有可用的权重档位</div>';
+      return;
+    }
+
+    tiers.forEach((t) => {
+      const node = tpl.content.firstElementChild.cloneNode(true);
+      node.dataset.tier = t.key;
+
+      const [badgeText, badgeCls] = WEIGHT_BADGE[t.key] || [t.key, "w-badge-normal"];
+      const badgeEl = node.querySelector(".weight-badge");
+      badgeEl.textContent = badgeText;
+      badgeEl.className = "weight-badge " + badgeCls;
+
+      node.querySelector(".weight-label").textContent = t.label || t.key;
+      node.querySelector(".weight-desc").textContent = t.desc || "";
+
+      node.querySelector(".weight-up").addEventListener("click", () => moveWeight(node, -1));
+      node.querySelector(".weight-down").addEventListener("click", () => moveWeight(node, 1));
+
+      list.appendChild(node);
+    });
+
+    refreshWeightRanks();
+    enableWeightDrag();
+  }
+
+  function moveWeight(node, dir) {
+    const sib = dir < 0 ? node.previousElementSibling : node.nextElementSibling;
+    if (!sib) return;
+    if (dir < 0) sib.before(node);
+    else sib.after(node);
+    refreshWeightRanks();
+    weightMsg("顺序已调整，记得保存", "busy");
+  }
+
+  let dragWeight = null;
+
+  function enableWeightDrag() {
+    const list = $("weight-list");
+    if (list.dataset.dragBound === "1") return;
+    list.dataset.dragBound = "1";
+
+    list.addEventListener("dragstart", (e) => {
+      const item = e.target.closest ? e.target.closest(".weight-item") : null;
+      if (!item) return;
+      dragWeight = item;
+      item.classList.add("is-dragging");
+      try {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", item.dataset.tier || "tier");
+        e.dataTransfer.setDragImage(item, 30, 20);
+      } catch (_) {}
+    });
+
+    list.addEventListener("dragend", () => {
+      if (dragWeight) dragWeight.classList.remove("is-dragging");
+      dragWeight = null;
+      refreshWeightRanks();
+      weightMsg("顺序已调整，记得保存", "busy");
+    });
+
+    list.addEventListener("dragover", (e) => {
+      if (!dragWeight) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const over = e.target.closest ? e.target.closest(".weight-item") : null;
+      if (!over || over === dragWeight) return;
+      const rect = over.getBoundingClientRect();
+      if (e.clientY > rect.top + rect.height / 2) over.after(dragWeight);
+      else over.before(dragWeight);
+      refreshWeightRanks();
+    });
+
+    list.addEventListener("drop", (e) => {
+      if (dragWeight) e.preventDefault();
+    });
+  }
+
+  async function loadWeights() {
+    try {
+      const data = await api("/api/weight");
+      if (!data.success) {
+        weightMsg("读取失败", "err");
+        return;
+      }
+      state.weightDefault = data.default_order || [];
+      renderWeights(data);
+      weightMsg("");
+    } catch (e) {
+      weightMsg("读取异常", "err");
+    }
+  }
+
+  async function saveWeights() {
+    const order = collectWeightOrder();
+    if (!order.length) return;
+    weightMsg("正在保存...", "busy");
+    try {
+      const res = await api("/api/weight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order }),
+      });
+      if (res.success) {
+        weightMsg("✅ 已保存并实时生效", "ok");
+        toast("权重顺序已更新：" + res.order.join(" > "));
+        loadWeights();
+      } else {
+        weightMsg("❌ 保存失败", "err");
+      }
+    } catch (e) {
+      weightMsg("❌ 网络异常", "err");
+    }
   }
 
   /* ----------------------------- 文件投递 ----------------------------- */
@@ -1055,6 +1214,19 @@
     $("dedup-cancel-btn").addEventListener("click", cancelDedup);
 
     $("config-form").addEventListener("submit", saveConfig);
+    $("weight-save").addEventListener("click", saveWeights);
+    $("weight-reset").addEventListener("click", async () => {
+      const def = state.weightDefault && state.weightDefault.length
+        ? state.weightDefault
+        : ["UC", "C", "U", "NORMAL"];
+      await api("/api/weight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order: def }),
+      });
+      toast("已恢复默认权重顺序");
+      loadWeights();
+    });
     $("pause-btn").addEventListener("click", toggleLogPause);
     $("clear-btn").addEventListener("click", () => {
       $("log-box").replaceChildren();

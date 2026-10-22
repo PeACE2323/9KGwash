@@ -38,12 +38,30 @@ def shoot(url: str, out: str, width: int = 1400, height: int = 900, full: bool =
     if os.path.exists(out):
         os.remove(out)
 
-    # 浏览器 profile 放在系统临时目录，避免污染仓库工作区。
-    # 优先用显式临时目录，取不到时退化为仓库外的兄弟目录。
-    profile_root = os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir()
-    if not os.path.isdir(profile_root):
-        profile_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    profile = os.path.join(profile_root, "9kgwash-shot-profile")
+    # 浏览器 profile 放在「仓库外的兄弟目录」，避免污染仓库工作区。
+    # 系统临时目录在部分沙箱/企业环境中不可写，故不优先使用。
+    import uuid
+
+    fallback_root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".shots"
+    )
+    profile_root = None
+    for cand in (os.environ.get("TEMP"), os.environ.get("TMP"), fallback_root):
+        if not cand:
+            continue
+        try:
+            os.makedirs(cand, exist_ok=True)
+            probe = os.path.join(cand, ".w_" + uuid.uuid4().hex[:6])
+            os.makedirs(probe, exist_ok=True)
+            os.rmdir(probe)
+            profile_root = cand
+            break
+        except OSError:
+            continue
+    if not profile_root:
+        raise SystemExit("没有可写的临时目录用于浏览器 profile")
+
+    profile = os.path.join(profile_root, "9kgwash-shot-" + uuid.uuid4().hex[:8])
     os.makedirs(profile, exist_ok=True)
 
     args = [
