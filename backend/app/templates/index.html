@@ -6,6 +6,17 @@
   <title>9KGwash · 自动洗板控制台</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script>
+    /* 在样式生效前恢复主题，避免刷新时闪一下深色 */
+    (function () {
+      try {
+        var t = localStorage.getItem("9kgwash-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <div class="bg-aurora" aria-hidden="true"></div>
@@ -67,6 +78,10 @@
           <span class="pill {% if dry_run %}pill-warn{% else %}pill-danger{% endif %}" id="mode-pill">
             {{ 'DRY RUN 模拟' if dry_run else '实弹武装' }}
           </span>
+          <button class="theme-toggle" id="theme-toggle" title="切换深色 / 浅色主题">
+            <span class="theme-icon" id="theme-icon">🌙</span>
+            <span id="theme-label">深色</span>
+          </button>
         </div>
       </header>
 

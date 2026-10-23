@@ -158,6 +158,39 @@
     if (name === "config") loadWeights();
   }
 
+  /* ----------------------------- 主题切换 ----------------------------- */
+  const THEME_KEY = "9kgwash-theme";
+
+  function currentTheme() {
+    // 优先读 html 上的属性（head 内联脚本已提前设置），兜底读 localStorage
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "light" || attr === "dark") return attr;
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === "light" || saved === "dark") return saved;
+    } catch (e) {}
+    return "dark";
+  }
+
+  function applyTheme(theme, persist) {
+    const t = theme === "light" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", t);
+    const icon = $("theme-icon");
+    const label = $("theme-label");
+    if (icon) icon.textContent = t === "light" ? "☀️" : "🌙";
+    if (label) label.textContent = t === "light" ? "浅色" : "深色";
+    if (persist) {
+      try {
+        localStorage.setItem(THEME_KEY, t);
+      } catch (e) {}
+    }
+  }
+
+  function toggleTheme() {
+    applyTheme(currentTheme() === "light" ? "dark" : "light", true);
+    toast(currentTheme() === "light" ? "已切换到浅色主题" : "已切换到深色主题");
+  }
+
   /* ----------------------------- 洗板权重 ----------------------------- */
   const WEIGHT_BADGE = {
     UC: ["UC", "w-badge-uc"],
@@ -1450,6 +1483,7 @@
     $("dedup-cancel-btn").addEventListener("click", cancelDedup);
 
     $("config-form").addEventListener("submit", saveConfig);
+    $("theme-toggle").addEventListener("click", toggleTheme);
     $("weight-save").addEventListener("click", saveWeights);
     $("weight-reset").addEventListener("click", async () => {
       const def = state.weightDefault && state.weightDefault.length
@@ -1567,6 +1601,8 @@
   /* ----------------------------- 启动 ----------------------------- */
   function start() {
     bind();
+    // 同步主题按钮文案（主题本身已由 head 内联脚本提前设置）
+    applyTheme(currentTheme(), false);
     switchView(location.hash.replace("#", "") || "overview");
     fetchLogs();
     // 仅在日志视图可见时轮询，减少无谓请求
