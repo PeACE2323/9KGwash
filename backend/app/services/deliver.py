@@ -71,10 +71,32 @@ VALID_KINDS = ("jav", "western", "other", "fallback")
 
 
 def _split_keywords(raw) -> list[str]:
-    """把关键字字段统一为字符串列表（兼容字符串、中文逗号、换行分隔）。"""
-    if isinstance(raw, str):
-        raw = raw.replace("，", ",").replace("\n", ",").split(",")
-    return [str(k).strip() for k in (raw or []) if str(k).strip()]
+    """把关键字字段统一为去重后的字符串列表。
+
+    兼容：字符串（英文逗号 / 中文逗号 / 顿号 / 换行）、数组（元素内也可能含分隔符）。
+    不分大小写去重，保留首次出现的大小写写法，并清理首尾空白。
+    这样旧版「逗号分隔字符串」配置升级后会自动拆成规范的关键字列表。
+    """
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple)) else [raw]
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = str(item or "")
+        for sep in ("，", "、", "\n", "\r", ";", "；"):
+            text = text.replace(sep, ",")
+        for piece in text.split(","):
+            kw = piece.strip()
+            if not kw:
+                continue
+            key = kw.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(kw)
+    return out
 
 
 def _normalize_child(raw: dict, idx: int = 0, group_kind: str = "jav") -> dict:

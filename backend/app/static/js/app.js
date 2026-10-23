@@ -333,9 +333,173 @@
   function splitKeywords(raw) {
     return (raw || "")
       .replace(/，/g, ",")
+      .replace(/、/g, ",")
       .split(/[,\n]/)
       .map((s) => s.trim())
       .filter(Boolean);
+  }
+
+  /* ------------------------- 关键字标签输入组件 ------------------------- */
+  /**
+   * 把任意「关键字来源」规范成去重后的标签数组。
+   * 兼容：字符串（英文/中文逗号、顿号、换行）、数组。
+   * 旧数据（逗号分隔字符串）会自动拆分，实现无缝迁移。
+   */
+  function normalizeKeywords(raw) {
+    let list = [];
+    if (Array.isArray(raw)) {
+      raw.forEach((item) => {
+        list = list.concat(splitKeywords(String(item)));
+      });
+    } else {
+      list = splitKeywords(String(raw || ""));
+    }
+    const seen = new Set();
+    const out = [];
+    list.forEach((k) => {
+      const v = k.trim();
+      if (!v) return;
+      const key = v.toLowerCase();
+      if (seen.has(key)) return; // 不分大小写去重
+      seen.add(key);
+      out.push(v);
+    });
+    return out;
+  }
+
+  /**
+   * 初始化一个关键字标签输入框。
+   * @param {HTMLElement} host 容器（.kw-input）
+   * @param {Array|string} value 初始值
+   * @returns {{get:Function, set:Function, onChange:Function}}
+   */
+  function createKeywordInput(host, value) {
+    let tags = normalizeKeywords(value);
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "kw-field";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+
+    const placeholder = host.dataset.placeholder || "输入关键字后回车添加";
+
+    function notify() {
+      if (typeof host._onChange === "function") host._onChange(tags.slice());
+    }
+
+    function refreshPlaceholder() {
+      // 有标签时输入框变窄，placeholder 只在没有标签时显示
+      input.placeholder = tags.length ? "" : placeholder;
+    }
+
+    function chip(text) {
+      const el = document.createElement("span");
+      el.className = "kw-chip";
+      const label = document.createElement("span");
+      label.className = "kw-chip-text";
+      label.textContent = text;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "kw-chip-del";
+      btn.title = "移除 " + text;
+      btn.textContent = "×";
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        tags = tags.filter((t) => t !== text);
+        render();
+        notify();
+      });
+      el.appendChild(label);
+      el.appendChild(btn);
+      return el;
+    }
+
+    function render() {
+      host.replaceChildren();
+      tags.forEach((t) => host.appendChild(chip(t)));
+      host.appendChild(input);
+      refreshPlaceholder();
+    }
+
+    function add(raw) {
+      const items = normalizeKeywords(raw);
+      if (!items.length) return false;
+      let changed = false;
+      items.forEach((k) => {
+        const exists = tags.some((t) => t.toLowerCase() === k.toLowerCase());
+        if (!exists) {
+          tags.push(k);
+          changed = true;
+        }
+      });
+      if (changed) {
+        render();
+        notify();
+      }
+      return changed;
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        // 回车：把当前输入变成标签
+        if (add(input.value)) input.value = "";
+        else input.value = "";
+        return;
+      }
+      if (e.key === "," || e.key === "，" || e.key === "、") {
+        // 输入逗号/顿号直接确认当前关键字，不写入框内
+        e.preventDefault();
+        if (add(input.value)) input.value = "";
+        return;
+      }
+      if (e.key === "Backspace" && !input.value && tags.length) {
+        // 退格删除最后一个标签
+        tags.pop();
+        render();
+        notify();
+        input.focus();
+      }
+    });
+
+    // 粘贴：自动按逗号/换行拆分成多个标签
+    input.addEventListener("paste", (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData("text");
+      if (!text) return;
+      if (/[,，、\n]/.test(text)) {
+        e.preventDefault();
+        add(text);
+        input.value = "";
+      }
+    });
+
+    // 失焦时把残留输入也转成标签，避免用户忘了回车
+    input.addEventListener("blur", () => {
+      if (input.value.trim()) {
+        add(input.value);
+        input.value = "";
+      }
+    });
+
+    // 点击容器空白处聚焦到输入框
+    host.addEventListener("click", (e) => {
+      if (e.target === host) input.focus();
+    });
+
+    render();
+
+    return {
+      get: () => tags.slice(),
+      set: (v) => {
+        tags = normalizeKeywords(v);
+        render();
+      },
+      onChange: (fn) => {
+        host._onChange = fn;
+      },
+      input,
+    };
   }
 
   /** 组头徽标 / 状态 / 子规则计数 随配置刷新 */
@@ -362,6 +526,72 @@
     // 欧美/兜底组不提供标记，隐藏子规则里的标记控件
     node.classList.toggle("no-mark", kind === "western" || kind === "fallback");
     node.querySelector(".group-name").title = name;
+
+    // 折叠态的关键字预览：显示前若干个标签，超出折叠为 +N
+    refreshGroupKeywordPreview(node, kind);
+  }
+
+  /** 汇总组内全部关键字，折叠态用小标签展示 */
+  function refreshGroupKeywordPreview(node, kind) {
+    let host = node.querySelector(".group-kw-preview");
+    if (!host) {
+      host = document.createElement("span");
+      host.className = "group-kw-preview";
+      node.querySelector(".group-head").insertBefore(
+        host,
+        node.querySelector(".group-head .rule-spacer")
+      );
+    }
+    host.replaceChildren();
+
+    if (kind === "fallback") {
+      const t = document.createElement("span");
+      t.className = "kw-mini kw-mini-dim";
+      t.textContent = "所有未命中的视频";
+      host.appendChild(t);
+      host.title = "";
+      return;
+    }
+
+    if (kind === "western") {
+      // 欧美组的“关键字”其实是厂牌，标签样式区分一下
+      host.classList.add("is-studio");
+    } else {
+      host.classList.remove("is-studio");
+    }
+
+    const all = [];
+    node.querySelectorAll(".child-item").forEach((c) => {
+      if (!c._kw) return;
+      c._kw.get().forEach((k) => {
+        if (!all.some((x) => x.toLowerCase() === k.toLowerCase())) all.push(k);
+      });
+    });
+
+    if (!all.length) {
+      const t = document.createElement("span");
+      t.className = "kw-mini kw-mini-dim";
+      t.textContent = "未设置关键字";
+      host.appendChild(t);
+      host.title = "";
+      return;
+    }
+
+    const LIMIT = 3;
+    const shown = all.slice(0, LIMIT);
+    shown.forEach((k) => {
+      const t = document.createElement("span");
+      t.className = "kw-mini";
+      t.textContent = k;
+      host.appendChild(t);
+    });
+    if (all.length > LIMIT) {
+      const more = document.createElement("span");
+      more.className = "kw-mini kw-mini-more";
+      more.textContent = `+${all.length - LIMIT}`;
+      host.appendChild(more);
+    }
+    host.title = all.join(", ");
   }
 
   /** 刷新组的序号 */
@@ -386,7 +616,16 @@
     const tpl = $("child-tpl");
     const node = tpl.content.firstElementChild.cloneNode(true);
     node.dataset.id = child.id || "";
-    node.querySelector(".child-keywords").value = (child.keywords || []).join(", ");
+
+    const kwHost = node.querySelector(".child-keywords");
+    // 关键字用标签输入；旧数据（逗号分隔字符串）由 normalizeKeywords 自动拆分
+    const kw = createKeywordInput(kwHost, child.keywords || []);
+    node._kw = kw;
+    kw.onChange(() => {
+      refreshGroupHead(node.closest(".group-item"));
+      deliverMsg("", "");
+    });
+
     node.querySelector(".child-mark-val").value = child.mark || "";
     node.querySelector(".child-mark-pos").value = child.mark_position || "after";
     node.querySelector(".child-enabled-cb").checked = child.enabled !== false;
@@ -407,9 +646,6 @@
     });
     node.querySelector(".child-enabled-cb").addEventListener("change", (e) => {
       node.classList.toggle("is-disabled", !e.target.checked);
-    });
-    node.querySelector(".child-keywords").addEventListener("input", () => {
-      deliverMsg("", "");
     });
 
     groupNode.querySelector(".child-list").appendChild(node);
@@ -583,7 +819,7 @@
       node.querySelectorAll(".child-item").forEach((c) => {
         children.push({
           id: c.dataset.id || "",
-          keywords: splitKeywords(c.querySelector(".child-keywords").value),
+          keywords: c._kw ? c._kw.get() : [],
           mark: c.querySelector(".child-mark-val").value.trim(),
           mark_position: c.querySelector(".child-mark-pos").value,
           enabled: c.querySelector(".child-enabled-cb").checked,

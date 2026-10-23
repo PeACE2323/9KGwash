@@ -958,6 +958,9 @@ select option { background: #121826; }
   border-top: 1px solid rgba(148, 163, 184, 0.12);
   background: rgba(9, 13, 22, 0.45);
 }
+/* 组体所有直接子项都不允许被压缩，避免文字/提示条被挤扁截断 */
+.group-body > * { flex: 0 0 auto; }
+.group-body > .child-list { flex: 1 1 auto; }
 .group-item.is-expanded .group-body { display: flex; }
 
 .rule-grid {
@@ -991,10 +994,14 @@ select option { background: #121826; }
 .group-fallback-tip,
 .group-western-tip {
   display: none;
+  /* 父级是 flex 容器，必须禁止收缩，否则多行文字会被压扁截断 */
+  flex: 0 0 auto;
   font-size: 11.5px;
-  line-height: 1.6;
+  line-height: 1.7;
   border-radius: 8px;
   padding: 8px 10px;
+  white-space: normal;
+  word-break: break-word;
 }
 .group-fallback-tip {
   color: #fde68a;
@@ -1450,4 +1457,131 @@ select option { background: #121826; }
 @media (max-width: 640px) {
   .weight-desc { display: none; }
   .weight-item { gap: 7px; padding: 8px 9px; }
+}
+
+/* ==========================================================================
+   关键字标签输入（.kw-input）与折叠态预览（.kw-mini）
+   ========================================================================== */
+.kw-input {
+  flex: 1 1 220px;
+  min-width: 120px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: rgba(9, 13, 22, 0.85);
+  cursor: text;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.kw-input:focus-within {
+  border-color: var(--pink);
+  box-shadow: 0 0 0 2px rgba(236, 72, 153, 0.15);
+}
+
+.kw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border-radius: 999px;
+  background: rgba(236, 72, 153, 0.15);
+  border: 1px solid rgba(236, 72, 153, 0.38);
+  color: var(--pink-soft);
+  font-size: 11px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  transition: background 0.15s ease;
+}
+.kw-chip:hover { background: rgba(236, 72, 153, 0.24); color: #fff; }
+
+.kw-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.kw-chip-del {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 3px;
+  border-radius: 50%;
+  opacity: 0.7;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.kw-chip-del:hover {
+  opacity: 1;
+  background: rgba(236, 72, 153, 0.55);
+  color: #fff;
+}
+
+.kw-field {
+  flex: 1 1 70px;
+  min-width: 70px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 11.5px;
+  font-family: var(--mono);
+  padding: 3px 2px;
+  line-height: 1.6;
+}
+.kw-field::placeholder { color: var(--text-faint); }
+
+/* 折叠态：组头里的小号关键字标签 */
+.group-kw-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.kw-mini {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-family: var(--mono);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.13);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.group-kw-preview.is-studio .kw-mini {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.3);
+  color: #a5f3fc;
+}
+.kw-mini-dim {
+  color: var(--text-faint);
+  background: transparent;
+  border-style: dashed;
+}
+.kw-mini-more {
+  color: var(--pink-soft);
+  background: rgba(236, 72, 153, 0.14);
+  border-color: rgba(236, 72, 153, 0.32);
+  font-weight: 700;
+}
+
+/* 窄屏：子规则换行时关键字输入独占一行 */
+@media (max-width: 900px) {
+  .kw-input { flex: 1 1 100%; order: 1; }
+  .group-kw-preview { flex: 1 1 100%; order: 10; }
 }
