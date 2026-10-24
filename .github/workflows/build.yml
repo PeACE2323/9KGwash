@@ -84,6 +84,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_theme_font
 
+      - name: 运行番号识别测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_fanhao_plain
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

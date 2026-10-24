@@ -47,7 +47,10 @@ MOVIE_AUX_DIRS = {
 def is_jav(text: str | None) -> bool:
     if not text:
         return False
-    return bool(_JAV_RE.search(text))
+    if _JAV_RE.search(text):
+        return True
+    # 兼容无连字符写法（katu00118 / ABP00123）
+    return _find_plain_fanhao(text) is not None
 
 
 def parse_fanhao_info(text: str | None):
@@ -56,9 +59,15 @@ def parse_fanhao_info(text: str | None):
     - raw            原样大写番号，如 ``100ABC-123``
     - canonical      去掉前置数字后的标准番号，如 ``ABC-123``
     - has_leading    是否存在前置数字
+
+    识别分两种写法：
+    1. 规范写法（带连字符）—— 与原脚本一致，优先匹配；
+    2. 无连字符写法（如 ``katu00118`` / ``ABP00123``）—— 仅在完全找不到
+       规范番号时兜底，避免影响既有洗板行为。
     """
     if not text:
         return None, None, False
+
     match = _FANHAO_RE.search(text)
     if match:
         raw = match.group(1).upper()
@@ -66,7 +75,42 @@ def parse_fanhao_info(text: str | None):
         has_leading = stripped != raw
         canonical = stripped if has_leading else raw
         return canonical, raw, has_leading
+
+    # 兜底：无连字符写法。统一归一为「厂牌-数字」，便于与规范写法比对同一性。
+    plain = _find_plain_fanhao(text)
+    if plain:
+        # 去掉数字的前导零：katu00118 与 KATU-118 应视为同一番号
+        digits = plain[1].lstrip("0") or plain[1]
+        raw = f"{plain[0].upper()}-{digits}"
+        return raw, raw, False
+
     return None, None, False
+
+
+# 无连字符番号：字母 + 数字（数字后可跟字母后缀，但后缀不计入番号）
+_PLAIN_RE = re.compile(r"(?<![a-zA-Z0-9])([a-zA-Z]{2,10})(\d{2,6})([a-zA-Z]*)(?![a-zA-Z0-9])")
+# 这些「厂牌」其实是分辨率/编码/发布站词，排除掉
+_PLAIN_BAD_WORDS = {
+    "www", "http", "https", "com", "net", "org", "hhd", "x264", "x265", "h264", "h265",
+    "hevc", "avc", "web", "rip", "hdr", "uhd", "fhd", "hd", "sd", "vol", "part", "disc",
+    "disk", "sample", "trailer", "season", "episode", "movie", "video", "clip", "raw",
+    "restored", "remastered", "sub", "subs", "mp", "mkv", "mp4", "avi", "wmv", "flv",
+}
+_PLAIN_BAD_SUFFIX = re.compile(r"^(?:\d{3,4}p|[0-9]+k|x26[45]|hevc|avc|web|rip|hdr|uhd|fps)$", re.I)
+
+
+def _find_plain_fanhao(text: str):
+    """在文本中查找无连字符番号，返回 (厂牌, 数字) 或 None。"""
+    for m in _PLAIN_RE.finditer(text):
+        word, digits, suffix = m.group(1), m.group(2), m.group(3)
+        if word.lower() in _PLAIN_BAD_WORDS:
+            continue
+        if suffix and _PLAIN_BAD_SUFFIX.match(suffix):
+            continue
+        if not (2 <= len(digits) <= 6):
+            continue
+        return word, digits
+    return None
 
 
 def extract_pure_fanhao(text: str, apply_ignore: bool = False) -> str:

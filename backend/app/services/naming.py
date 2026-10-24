@@ -35,6 +35,29 @@ _PREFIX_PATTERNS = [
 # 这样「259LUXU-1900」会被整体识别为一个番号，而不是只认出 LUXU-1900。
 _FIND_RE = re.compile(r"(?<![a-z0-9])(\d*)([a-z]{2,10})-(\d{2,6})(?!\d)", re.IGNORECASE)
 
+# 无连字符写法：厂牌字母紧接数字，如 katu00118 / ABP00123 / SSIS888
+# 数字后允许紧跟字母后缀（katu00118hhb 中的 hhb），但要求后缀不是分辨率/编码类词，
+# 且不能继续接数字（避免把 2024.0105 这类日期串误吞）。
+_NO_SEP_RE = re.compile(
+    r"(?<![a-z0-9])([a-z]{2,10})(\d{2,6})([a-z]{0,6})(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+# 数字后缀里出现这些词，说明是分辨率/编码而非番号后缀，整体判为非番号
+_BAD_SUFFIX_RE = re.compile(
+    r"^(?:\d{3,4}p|[0-9]+(?:p|k)|x?26[45]|hevc|avc|web|rip|hdr|uhd|fps)$",
+    re.IGNORECASE,
+)
+
+# 这些「字母」其实是常见发布站/编码前缀的一部分，不该当成厂牌
+_BAD_STUDIO = {
+    "www", "http", "https", "com", "net", "org", "la", "cc", "vim", "xyz",
+    "hhd", "hhd800", "hevc", "x264", "x265", "h264", "h265", "mp4", "mkv",
+    "avi", "wmv", "flv", "vol", "part", "disc", "disk", "sample", "trailer",
+    "season", "episode", "ep", "movie", "video", "clip", "full", "hd", "fhd",
+    "uhd", "sd", "raw", "uncensored", "restored", "remastered", "sub", "subs",
+}
+
 # 已知需要排除的伪番号片段（出现在前缀/编码里，非真实番号）
 _FALSE_POSITIVE_WORDS = {
     "cd", "dvd", "hd", "fhd", "uhd", "sd", "part", "vol", "disc", "disk",
@@ -65,13 +88,38 @@ def strip_publish_prefix(name: str) -> tuple[str, str]:
     return consumed, rest
 
 
+def _is_plausible_no_sep(word: str, digits: str, suffix: str) -> bool:
+    """判断「无连字符写法」是否像真实番号。
+
+    规则：
+    - 厂牌至少 2 位字母，且不在已知的伪厂牌表里
+    - 数字 2~6 位（katu00118 的 00118 会被保留原样）
+    - 后缀若有，不能是 1080p / 4k / x264 这类分辨率编码
+    """
+    w = word.lower()
+    if len(w) < 2 or w in _BAD_STUDIO:
+        return False
+    if w.isdigit():
+        return False
+    if not (2 <= len(digits) <= 6):
+        return False
+    if suffix and _BAD_SUFFIX_RE.match(suffix):
+        return False
+    return True
+
+
 def find_fanhao(name: str) -> dict | None:
     """在文件名中智能定位番号。
 
+    支持两种写法，优先取「带连字符」的规范写法：
+        1. 规范写法  DASS-787 / ABP-159-C / 259LUXU-1900
+        2. 无连字符  katu00118 / ABP00123 / katu00118hhb（数字后字母视作后缀）
+
     返回 dict:
         prefix     番号之前的全部文本（例如 ``www.98T.la@``）
-        fanhao     番号原文（保留原大小写），如 ``DASS-787``
-        start/end  番号在该名称中的下标区间
+        fanhao     番号原文（保留原大小写与原写法），如 ``DASS-787`` / ``katu00118``
+        start/end  番号在该名称中的下标区间（不含后缀字母）
+        suffix     无连字符写法里数字后紧跟的字母后缀（如 ``hhb``），规范写法为空
         has_leading_digits  是否形如 259LUXU-1900（前置数字厂牌）
 
     未找到返回 None。
@@ -83,41 +131,74 @@ def find_fanhao(name: str) -> dict | None:
     consumed, rest = strip_publish_prefix(name)
     offset = len(consumed)
 
-    candidates = []
-    for m in _FIND_RE.finditer(rest):
-        leading, word, digits = m.group(1), m.group(2), m.group(3)
-        if word.lower() in _FALSE_POSITIVE_WORDS:
-            continue
-        candidates.append(
-            (
-                offset + m.start(),
-                offset + m.end(),
-                m.group(0),
-                word,
-                digits,
-                bool(leading),
-            )
-        )
+    def scan(text: str, base: int):
+        """在 text 中扫描两种写法，返回候选列表。"""
+        cands = []
 
-    if not candidates:
-        # 兜底：若剥离后找不到，回到原文全文寻找（应对前缀规则未覆盖的情况）
-        for m in _FIND_RE.finditer(name):
+        # 1) 规范写法（带连字符）—— 优先级最高
+        for m in _FIND_RE.finditer(text):
             leading, word, digits = m.group(1), m.group(2), m.group(3)
             if word.lower() in _FALSE_POSITIVE_WORDS:
                 continue
-            candidates.append((m.start(), m.end(), m.group(0), word, digits, bool(leading)))
+            cands.append(
+                {
+                    "start": base + m.start(),
+                    "end": base + m.end(),
+                    "text": m.group(0),
+                    "word": word,
+                    "digits": digits,
+                    "suffix": "",
+                    "has_leading": bool(leading),
+                    "rank": 0,  # 规范写法优先
+                }
+            )
+
+        # 2) 无连字符写法
+        for m in _NO_SEP_RE.finditer(text):
+            word, digits, suffix = m.group(1), m.group(2), m.group(3)
+            if word.lower() in _FALSE_POSITIVE_WORDS:
+                continue
+            if not _is_plausible_no_sep(word, digits, suffix):
+                continue
+            if suffix and _BAD_SUFFIX_RE.match(suffix):
+                continue
+            # 番号只到数字结束，后缀字母不计入番号本体
+            body = m.group(1) + m.group(2)
+            cands.append(
+                {
+                    "start": base + m.start(),
+                    "end": base + m.start() + len(body),
+                    "text": body,
+                    "word": word,
+                    "digits": digits,
+                    "suffix": suffix,
+                    "has_leading": False,
+                    "rank": 1,
+                }
+            )
+        return cands
+
+    candidates = scan(rest, offset)
+
+    if not candidates:
+        # 兜底：若剥离后找不到，回到原文全文寻找（应对前缀规则未覆盖的情况）
+        candidates = scan(name, 0)
 
     if not candidates:
         return None
 
-    start, end, text, word, digits, has_leading = candidates[0]
+    # 排序：规范写法优先，其次按出现位置靠前
+    candidates.sort(key=lambda c: (c["rank"], c["start"]))
+    best = candidates[0]
 
     return {
-        "prefix": name[:start],
-        "fanhao": text,
-        "start": start,
-        "end": end,
-        "has_leading_digits": has_leading,
+        "prefix": name[: best["start"]],
+        "fanhao": best["text"],
+        "start": best["start"],
+        "end": best["end"],
+        "suffix": best["suffix"],
+        "has_leading_digits": best["has_leading"],
+        "style": "hyphen" if best["rank"] == 0 else "plain",
     }
 
 
