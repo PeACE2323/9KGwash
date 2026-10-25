@@ -61,12 +61,16 @@ def get_logs():
         category  按分类过滤（all/wash/hound/dedup/deliver/emby/system）
         limit     返回行数（默认 100，最大 500）
         strip     是否去掉正文里的分类标签（默认 1）
+        q         搜索查询关键字（不区分大小写）
     """
     from ..logging_setup import VALID_CATEGORIES, parse_category, strip_category
 
     category = (request.args.get("category") or "all").strip().lower()
     if category not in VALID_CATEGORIES:
         category = "all"
+
+    q = (request.args.get("q") or "").strip()
+    q_lower = q.lower()
 
     try:
         limit = int(request.args.get("limit", 100))
@@ -80,14 +84,17 @@ def get_logs():
         with open(config.LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
 
-        # 过滤时需要看全量再截断，否则某个分类可能永远为空
-        if category != "all":
+        # 过滤时需要看全量再截断，否则某个分类或关键字可能永远为空
+        if category != "all" or q_lower:
             kept = []
             for line in lines:
                 # 行格式：2025-01-01 00:00:00 [INFO] #cat#正文
                 body = line.split("]", 1)[-1] if "]" in line else line
-                if parse_category(body.strip()) == category:
-                    kept.append(line)
+                if category != "all" and parse_category(body.strip()) != category:
+                    continue
+                if q_lower and q_lower not in line.lower():
+                    continue
+                kept.append(line)
             lines = kept
 
         lines = lines[-limit:]
@@ -99,9 +106,9 @@ def get_logs():
         else:
             out = lines
 
-        return jsonify({"logs": out, "category": category, "total": len(out)})
+        return jsonify({"logs": out, "category": category, "total": len(out), "q": q})
     except Exception as e:  # noqa: BLE001
-        return jsonify({"logs": [f"无法读取日志文件: {str(e)}"], "category": category})
+        return jsonify({"logs": [f"无法读取日志文件: {str(e)}"], "category": category, "q": q})
 
 
 @bp.route("/api/logs/categories")

@@ -22,6 +22,8 @@
     logPaused: false,
     lastLogText: "",
     logCategory: "all",
+    logQuery: "", // 日志搜索关键字
+    logFollow: true, // 是否自动跟随最新日志
     emptyFolders: [],
     duplicates: [],
     busy: false,
@@ -151,8 +153,13 @@
     // 首次进入某视图时按需加载
     if (name === "overview") loadStatus();
     if (name === "logs") {
+      // 视图刚从隐藏变为可见，此时容器才有真实高度，需要重新滚到底部
+      state.logFollow = true;
+      updateLogFollowUI();
       fetchLogs();
       refreshLogCounts();
+      requestAnimationFrame(() => scrollLogToBottom(false));
+      setTimeout(() => scrollLogToBottom(false), 60);
     }
     if (name === "deliver") loadDeliverConfig();
     if (name === "config") loadWeights();
@@ -1134,10 +1141,49 @@
   }
 
   /* ----------------------------- 日志 ----------------------------- */
+  /** 判断内容变化时要不要自动滚到底部。
+   *  规则：用户没手动往回翻（logFollow=true）就自动跟随；搜索时总是滚到首条结果。 */
+  function shouldFollowLog() {
+    return state.logFollow !== false;
+  }
+
+  /** 滚到底部 */
+  function scrollLogToBottom(smooth) {
+    const box = $("log-box");
+    if (!box) return;
+    if (smooth && box.scrollTo) {
+      box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
+    } else {
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+
+  /** 高亮搜索关键字 */
+  function highlightLog(text, q) {
+    const safe = escapeHtml(text);
+    if (!q) return safe;
+    const needle = q.toLowerCase();
+    const low = safe.toLowerCase();
+    let out = "";
+    let i = 0;
+    while (true) {
+      const idx = low.indexOf(needle, i);
+      if (idx < 0) {
+        out += safe.slice(i);
+        break;
+      }
+      out += safe.slice(i, idx) + '<mark class="log-hit">' + safe.slice(idx, idx + q.length) + "</mark>";
+      i = idx + q.length;
+    }
+    return out;
+  }
+
   function renderLogs(lines) {
     const box = $("log-box");
-    const atBottom = box.scrollHeight - box.clientHeight <= box.scrollTop + 8;
+    const q = (state.logQuery || "").trim();
+    const follow = shouldFollowLog();
     const frag = document.createDocumentFragment();
+
     for (const raw of lines) {
       const line = String(raw).replace(/\r?\n$/, "");
       const div = document.createElement("div");
@@ -1146,30 +1192,92 @@
       if (m) {
         if (m[2] === "[ERROR]") div.classList.add("lvl-error");
         else if (m[2] === "[WARNING]") div.classList.add("lvl-warning");
-        div.innerHTML = '<span class="ts">' + escapeHtml(m[1]) + "</span> " + escapeHtml(m[3]);
+        div.innerHTML =
+          '<span class="ts">' + escapeHtml(m[1]) + "</span> " + highlightLog(m[3], q);
       } else {
-        div.textContent = line;
+        div.innerHTML = highlightLog(line, q);
       }
       frag.appendChild(div);
     }
     box.replaceChildren(frag);
-    if (atBottom) box.scrollTop = box.scrollHeight;
+
+    // 渲染后立即滚动：跟随模式滚到底；搜索模式滚到第一条命中
+    if (follow) {
+      scrollLogToBottom(false);
+      // 布局完成后补一次，兼容图片/字体导致的二次回流
+      requestAnimationFrame(() => scrollLogToBottom(false));
+    }
+  }
+
+  function updateLogFollowUI() {
+    const btn = $("follow-btn");
+    if (!btn) return;
+    const on = shouldFollowLog();
+    btn.textContent = on ? "⬇️ 自动跟随" : "⏸️ 已锁定";
+    btn.classList.toggle("is-on", on);
+    btn.title = on ? "新日志会自动滚动到底部（点击锁定）" : "已锁定当前位置（点击恢复自动跟随）";
+  }
+
+  function setLogFollow(on, notify) {
+    state.logFollow = !!on;
+    updateLogFollowUI();
+    if (on) {
+      scrollLogToBottom(true);
+      if (notify) toast("已恢复自动跟随");
+    } else if (notify) {
+      toast("已锁定日志位置");
+    }
   }
 
   async function fetchLogs() {
     if (state.logPaused) return;
     try {
       const cat = state.logCategory || "all";
-      const data = await api(`/api/logs?category=${encodeURIComponent(cat)}&limit=200`);
+      const q = (state.logQuery || "").trim();
+      // 搜索时放宽行数上限，尽量多给出命中结果
+      const limit = q ? 500 : 200;
+      const url =
+        `/api/logs?category=${encodeURIComponent(cat)}&limit=${limit}` +
+        (q ? `&q=${encodeURIComponent(q)}` : "");
+      const data = await api(url);
       const lines = data.logs || [];
-      const text = cat + "|" + lines.join("");
+      const text = cat + "|" + q + "|" + lines.join("");
       if (text !== state.lastLogText) {
         state.lastLogText = text;
         renderLogs(lines);
+        updateLogSearchInfo(lines.length, q);
       }
     } catch (e) {
       /* 静默重试 */
     }
+  }
+
+  /** 搜索状态提示：命中条数 / 无结果 */
+  function updateLogSearchInfo(count, q) {
+    const el = $("log-search-info");
+    if (!el) return;
+    if (!q) {
+      el.textContent = "";
+      el.className = "log-search-info";
+      return;
+    }
+    if (count > 0) {
+      el.textContent = `命中 ${count} 条`;
+      el.className = "log-search-info ok";
+    } else {
+      el.textContent = "没有匹配的日志";
+      el.className = "log-search-info none";
+    }
+  }
+
+  /** 执行搜索（防抖调用） */
+  function applyLogSearch(q) {
+    state.logQuery = q || "";
+    state.lastLogText = "";
+    // 搜索时强制跟随（滚到首条结果）
+    if (state.logQuery.trim()) state.logFollow = true;
+    updateLogFollowUI();
+    fetchLogs();
   }
 
   /** 刷新各分类的条数徽标 */
@@ -1185,10 +1293,12 @@
     }
   }
 
-  /** 切换日志分类 */
+  /** 切换日志分类（保留当前搜索词，相当于在该分类内搜索） */
   function switchLogCategory(cat) {
     state.logCategory = cat;
     state.lastLogText = "";
+    state.logFollow = true;
+    updateLogFollowUI();
     document.querySelectorAll(".log-tab").forEach((t) => {
       t.classList.toggle("active", t.dataset.cat === cat);
     });
@@ -1503,6 +1613,54 @@
       state.lastLogText = "\u0000-cleared";
     });
 
+    // 日志自动跟随开关
+    $("follow-btn").addEventListener("click", () => {
+      setLogFollow(!shouldFollowLog(), true);
+    });
+
+    // 用户手动往上翻时自动锁定，翻回底部时恢复跟随
+    $("log-box").addEventListener("scroll", () => {
+      const box = $("log-box");
+      const atBottom = box.scrollHeight - box.clientHeight <= box.scrollTop + 8;
+      if (!atBottom && state.logFollow) {
+        state.logFollow = false;
+        updateLogFollowUI();
+      } else if (atBottom && !state.logFollow && state.logQuery === "") {
+        state.logFollow = true;
+        updateLogFollowUI();
+      }
+    });
+
+    // 日志搜索（输入防抖 300ms，回车立即执行）
+    let searchTimer = null;
+    const doSearch = (val) => {
+      state.logCategory = state.logCategory || "all";
+      applyLogSearch(val);
+    };
+    $("log-search").addEventListener("input", (e) => {
+      const val = e.target.value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => doSearch(val), 300);
+    });
+    $("log-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        clearTimeout(searchTimer);
+        doSearch(e.target.value);
+      } else if (e.key === "Escape") {
+        e.target.value = "";
+        clearTimeout(searchTimer);
+        doSearch("");
+      }
+    });
+    $("log-search-clear").addEventListener("click", () => {
+      const input = $("log-search");
+      input.value = "";
+      clearTimeout(searchTimer);
+      doSearch("");
+      input.focus();
+    });
+
     // 日志分类标签页
     $("log-tabs").addEventListener("click", (e) => {
       const tab = e.target.closest(".log-tab");
@@ -1603,6 +1761,7 @@
     bind();
     // 同步主题按钮文案（主题本身已由 head 内联脚本提前设置）
     applyTheme(currentTheme(), false);
+    updateLogFollowUI();
     switchView(location.hash.replace("#", "") || "overview");
     fetchLogs();
     // 仅在日志视图可见时轮询，减少无谓请求

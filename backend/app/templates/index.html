@@ -331,9 +331,19 @@
               <h2>📡 活动日志</h2>
               <div class="log-tools">
                 <span class="live-dot" id="log-indicator">实时监控中</span>
+                <button class="btn btn-ghost btn-xs is-on" id="follow-btn" title="新日志会自动滚动到底部（点击锁定）">⬇️ 自动跟随</button>
                 <button class="btn btn-ghost btn-xs" id="pause-btn">⏸️ 暂停</button>
                 <button class="btn btn-ghost btn-xs" id="clear-btn">清屏</button>
               </div>
+            </div>
+
+            <!-- 日志搜索 -->
+            <div class="log-search">
+              <span class="log-search-icon">🔍</span>
+              <input type="text" id="log-search" class="log-search-input"
+                     placeholder="搜索日志内容，如 番号 / 关键字 / 目录名" autocomplete="off">
+              <button type="button" class="log-search-clear" id="log-search-clear" title="清除搜索">✕</button>
+              <span class="log-search-info" id="log-search-info"></span>
             </div>
 
             <!-- 分类标签页 -->

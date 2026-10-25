@@ -96,6 +96,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_quality_token
 
+      - name: 运行日志搜索测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_log_search
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test
