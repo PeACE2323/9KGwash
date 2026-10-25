@@ -102,6 +102,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_log_search
 
+      - name: 运行扩展名隔离测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_ext_isolation
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test
