@@ -90,6 +90,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_fanhao_plain
 
+      - name: 运行画质标识冲突测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_quality_token
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

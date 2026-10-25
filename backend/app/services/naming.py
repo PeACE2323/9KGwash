@@ -346,13 +346,58 @@ def split_name_ext(filename: str) -> tuple[str, str]:
     return base, ext
 
 
+# ---------------------------------------------------------------------------
+# 画质 / 编码标识：这些片段出现在文件名里时，关键字不应在其内部命中。
+# 例：关键字 FH 不应命中 RKI413.FHD 里的 FH（.FHD 是画质）
+# ---------------------------------------------------------------------------
+_QUALITY_TOKENS = (
+    "fhd", "uhd", "qhd", "hd", "sd", "4k", "8k", "2k", "1080p", "720p",
+    "2160p", "480p", "360p", "hevc", "avc", "x264", "x265", "h264", "h265",
+    "hdr", "sdr", "webrip", "web-dl", "webdl", "bluray", "bdrip", "hdtv",
+    "dvdrip", "aac", "ac3", "dts", "10bit", "8bit",
+)
+# 按长度倒序，保证匹配时优先命中更长的标识（如 1080p 先于 1080）
+_QUALITY_RE = re.compile(
+    r"(?<![a-z0-9])(?:"
+    + "|".join(re.escape(t) for t in sorted(_QUALITY_TOKENS, key=len, reverse=True))
+    + r")(?![a-z0-9])",
+    re.IGNORECASE,
+)
+# 便于 O(1) 判断「关键字是否正好是某个画质标识」
+_QUALITY_TOKEN_SET = {t.lower() for t in _QUALITY_TOKENS}
+
+
+def strip_quality_tokens(text: str) -> str:
+    """把画质/编码标识从文本中抹掉（替换为下划线），供关键字匹配使用。
+
+    这样关键字只在「真正的内容」里匹配，不会被 .FHD / 1080p 这类片段误触发。
+    只抹掉独立出现的标识，避免误伤正常单词。
+    """
+    if not text:
+        return ""
+    return _QUALITY_RE.sub("_", text)
+
+
 def match_any_keyword(text: str, keywords: list[str]) -> str | None:
-    """不分大小写地判断文本是否命中任一关键字，返回命中的第一个关键字。"""
-    low = (text or "").lower()
+    """不分大小写地判断文本是否命中任一关键字，返回命中的第一个关键字。
+
+    匹配前会先抹掉画质/编码标识（FHD、1080p、x264 等），
+    避免关键字（如 FH）被画质标识（.FHD）误触发。
+    """
+    low = strip_quality_tokens(text or "").lower()
+    raw_low = (text or "").lower()
     for kw in keywords or []:
         k = str(kw).strip()
-        if k and k.lower() in low:
+        if not k:
+            continue
+        kl = k.lower()
+        if kl in low:
             return k
+        # 仅当关键字「整体就是」某个画质标识、且用户确实想按画质筛选时回退。
+        # 但 FHD/HD 这类极易误伤的短词，只有在文件名里以独立词出现才放行。
+        if kl in _QUALITY_TOKEN_SET and _QUALITY_RE.search(text or ""):
+            if re.search(r"(?<![a-z0-9])" + re.escape(kl) + r"(?![a-z0-9])", raw_low):
+                return k
     return None
 
 
