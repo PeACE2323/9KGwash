@@ -102,6 +102,7 @@ docker compose up -d --build
 | `GET /api/scan_empty_folders` 空间猎犬 | `services/library.py` | ✅ 一致 |
 | `POST /api/delete_empty_folders` | `services/library.py` | ✅ 一致 |
 | `GET /api/scan_duplicates` 全库查重（版本/目录/同源番号三维判重） | `services/library.py` | ✅ 一致 |
+| **查重目录判定修正**：改用目录完整路径，父目录同名不再漏判 | `services/library.py` | 🔧 修复 |
 | `POST /api/resolve_duplicates` 查重洗板（跨目录粉碎 / 同目录降维） | `services/library.py` | ✅ 一致 |
 | `GET/POST /emby_webhook`：幽灵防御、档案拦截、本地扫描、去前缀转发、Header 透传 | `services/webhooks.py::handle_emby` | ✅ 一致 |
 | `POST /api/config` 热更新 | `routers/main.py` | ✅ 一致 |
@@ -405,20 +406,23 @@ CD2 通关、Emby 五种判定分支、去前缀转发、配置热更新、日�
 - 不含番号的文件权重固定为 -1，不参与洗板对决，也不受档位顺序影响
 - 配置项：`WEIGHT_ORDER`（存于 `/config/config.json`）
 
-### 扩展名隔离（重要）
+### 扩展名同权豁免（重要）
 
-洗板会**按扩展名分桶**，每个扩展名内部各自选王者，**扩展名之间互不淘汰**。
-
-原因：CMS 按 115 目录逐文件生成 STRM，Emby 又把同主干的 `.mp4` / `.mkv` 视为同一个影片项。
-若洗板删掉其中一个，会出现连锁反应：
-
-1. CMS 删除该文件对应的 STRM
-2. Emby 收到删除事件后移除整个 Movie 项，**连带把另一个版本的 STRM 也清空**
-
-表现为「影片消失，本地只剩元数据」。因此现在：
+洗板时，**只有「权重相同」且「扩展名不同」的版本才两个都保留**；
+权重不同则照常按权重洗板，扩展名不构成豁免。
 
 | 场景 | 处理 |
 | --- | --- |
+| `IPZZ-937-C.mp4` + `IPZZ-937-C.mkv`（权重都是 1） | ✅ 两个都保留 |
+| `ABC-200.mp4`(权0) + `ABC-200-C.mkv`(权1) | ✅ 删低权 `.mp4`，留 `.mkv` |
+| `ABC-100.mp4` + `ABC-100-C.mp4`（同扩展名） | ✅ 按权重淘汰低者 |
+
+**为什么要这样**：CMS 按 115 目录逐文件生成 STRM，Emby 又把同主干的 `.mp4` / `.mkv`
+视为同一个影片项。删掉权重相同的其中一个，会连锁导致另一个的 STRM 也被清空
+（表现为「影片消失，只剩元数据」）。
+但删除低权重版本是洗板的核心价值，因此豁免只限「同权重 + 不同扩展名」。
+
+--- | --- |
 | `IPZZ-937-C.mp4` + `IPZZ-937-C.mkv` | ✅ 两个都保留 |
 | `ABC-100.mp4` + `ABC-100-C.mp4` | ✅ 同扩展名内按权重淘汰低者 |
 | `ABC-100.mp4` + `ABC-100-C.mp4` + `ABC-100.mkv` | ✅ mp4 桶内留 `-C`，mkv 照常保留 |

@@ -138,6 +138,12 @@ def scan_duplicates() -> dict:
                                     "path": f_path,
                                     "name": f,
                                     "folder": os.path.basename(root),
+                                    # 目录完整相对路径：用于判断「是否真的在不同目录」。
+                                    # 只用 basename 会漏判——同番号分别位于
+                                    # 「日本有码/300MIUM/300MIUM-1457泷本雫叶」与
+                                    # 「素人/300MIUM/300MIUM-1457泷本雫叶」时，
+                                    # 父目录名相同但实际是两个不同位置。
+                                    "folder_path": os.path.relpath(root, base_p).replace("\\", "/"),
                                     "raw_fanhao": c_raw,
                                     "weight": weight,
                                     "is_part": is_part,
@@ -156,7 +162,8 @@ def scan_duplicates() -> dict:
                 version_groups.setdefault(v_hash, []).append(c)
 
             distinct_raw = set(f["raw_fanhao"] for f in files)
-            distinct_folders = set(f["folder"] for f in files)
+            # 用「目录完整路径」而不是 basename 判断是否分散在不同目录
+            distinct_folders = set(f.get("folder_path") or f["folder"] for f in files)
 
             if len(version_groups) > 1 or len(distinct_folders) > 1 or len(distinct_raw) > 1:
                 files.sort(key=lambda x: (x["weight"], x["folder_mtime"], x["file_mtime"]), reverse=True)

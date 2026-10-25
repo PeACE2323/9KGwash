@@ -4,8 +4,9 @@
 1. 目标文件必须是 JAV 番号，否则跳过；
 2. 在上一级目录里雷达搜索所有同番号（含前置数字互洗）的兄弟文件夹；
 3. 汇总这些文件夹内的全部视频文件，按「主干名|扩展名|权重|是否分盘」聚成版本队列；
-4. **按扩展名分桶**：每个扩展名内部各自选王者，扩展名之间互不淘汰
-   （避免删除 .mp4 时连带导致同主干的 .mkv 的 STRM 被 CMS/Emby 一并清掉）；
+4. **扩展名同权豁免**：与王者**权重相同**且**扩展名不同**的版本予以保留
+   （避免删 .mp4 时连带导致同主干的 .mkv 的 STRM 被 CMS/Emby 一并清掉）；
+   权重不同则照常按权重淘汰，不受扩展名影响；
 5. 桶内版本 > 1 时按 (权重, 目录 mtime, 文件 mtime) 降序选王者，其余淘汰：
    - 权重低于王者 => 低优画质，整组文件+关联元数据全删；
    - 权重相同且为分盘碎片 => 同质碎片冗余，全删；
@@ -136,55 +137,59 @@ def process_xiban(file_path: str) -> None:
     dry_run = config.get_dry_run()
 
     versions.sort(key=lambda x: (x["weight"], x["folder_mtime"], x["file_mtime"]), reverse=True)
+    king_version = versions[0]
 
     # ------------------------------------------------------------------
-    # 关键约束：同一主干名但「扩展名不同」的版本各自独立存活。
+    # 扩展名「同权豁免」规则：
+    #
+    #   只有当两个版本【权重相同】且【扩展名不同】时，才两个都保留；
+    #   权重不同时，即使扩展名不同也照常按权重洗（低权照删）。
     #
     # 原因（实测 IPZZ-937 事故）：
-    #   库中同时存在 IPZZ-937-C.mp4 与 IPZZ-937-C.mkv。
-    #   CMS 按 115 目录逐个文件生成 STRM，Emby 又把同主干的 .mp4/.mkv
+    #   库中同时存在 IPZZ-937-C.mp4 与 IPZZ-937-C.mkv（权重都是 1）。
+    #   CMS 按 115 目录逐文件生成 STRM，Emby 又把同主干的 .mp4/.mkv
     #   视作同一个影片项。洗板删掉其中任意一个后：
     #     1) CMS 会连带删除它对应的 STRM；
     #     2) Emby 收到删除事件会移除整个 Movie 项，把另一个版本的 STRM 也带走。
     #   结果就是「原理应保留的版本，STRM 整体失踪」。
     #
-    # 因此这里按扩展名分桶：每个扩展名内部才做取舍，扩展名之间互不淘汰。
+    # 但删除「低权重」版本是洗板的核心价值，不能被豁免掉，
+    # 因此豁免条件收紧为：权重相同 && 扩展名不同。
     # ------------------------------------------------------------------
-    def _ext_of(path: str) -> str:
-        return os.path.splitext(path)[1].lower()
-
-    ext_buckets: dict[str, list[dict]] = {}
-    for v in versions:
-        # 一个版本阵列可能包含多个文件，按首文件的扩展名归档
+    def _ext_of(v: dict) -> str:
         first_file = v["files"][0]["path"] if v.get("files") else ""
-        ext_buckets.setdefault(_ext_of(first_file), []).append(v)
+        return os.path.splitext(first_file)[1].lower()
 
-    kingdoms = [bucket[0] for bucket in ext_buckets.values()]
+    def _is_same_weight_other_ext(a: dict, b: dict) -> bool:
+        return a["weight"] == b["weight"] and _ext_of(a) != _ext_of(b)
+
     losers: list[tuple[dict, str, bool]] = []  # (输家版本, 原因, 是否只删 json)
 
-    for ext, bucket in ext_buckets.items():
-        king = bucket[0]
-        for loser_version in bucket[1:]:
-            if loser_version["weight"] < king["weight"]:
-                losers.append((loser_version, f"低优画质[{ext}]", False))
-            elif loser_version["is_part"]:
-                losers.append((loser_version, f"同质碎片冗余[{ext}]", False))
-            else:
-                losers.append((loser_version, f"同质单体冗余[{ext}]", True))
+    for loser_version in versions[1:]:
+        # 与王者权重相同、但扩展名不同 -> 豁免保留（避免 STRM 连带丢失）
+        if _is_same_weight_other_ext(loser_version, king_version):
+            continue
 
-    # 展示各扩展名的王者，便于排查
-    king_desc = "、".join(
-        f"{k['display_name']}[{os.path.splitext(k['files'][0]['path'])[1] if k.get('files') else ''}]"
-        for k in kingdoms
-    )
+        if loser_version["weight"] < king_version["weight"]:
+            losers.append((loser_version, "低优画质", False))
+        elif loser_version["is_part"]:
+            losers.append((loser_version, "同质碎片冗余", False))
+        else:
+            losers.append((loser_version, "同质单体冗余", True))
+
+    # 记录被豁免的跨扩展名版本，便于排查
+    exempted = [
+        v for v in versions[1:] if _is_same_weight_other_ext(v, king_version)
+    ]
+
     logger.info(
         f"🎯 [执行] [{target_canonical}] 锁定 {len(versions)} 个不同版本阵列，触发公平决斗！"
-        f"保留王者: {king_desc} (权重:{kingdoms[0]['weight']})"
+        f"保留王者: {king_version['display_name']} (权重:{king_version['weight']})"
     )
-    if len(kingdoms) > 1:
+    if exempted:
+        desc = "、".join(f"{v['display_name']}[{_ext_of(v) or '无扩展名'}]" for v in exempted)
         logger.info(
-            f"   [-] ℹ️ 检测到 {len(kingdoms)} 种扩展名（{'、'.join(sorted(e or '无扩展名' for e in ext_buckets))}），"
-            f"各扩展名的王者均保留，互不淘汰（避免 STRM 连带丢失）"
+            f"   [-] ℹ️ 以下版本与王者权重相同但扩展名不同，予以保留（避免 STRM 连带丢失）: {desc}"
         )
 
     for loser_version, reason, only_delete_json in losers:
