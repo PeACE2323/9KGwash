@@ -292,6 +292,22 @@ def update_config():
             payload["WATCHED_DIRS"] = dirs
             path_changes["WATCHED_DIRS"] = dirs
 
+        # ---- 各任务页的独立扫描路径（空数组 = 回退到默认）----
+        for key in ("HOUND_SCAN_PATHS", "DEDUP_SCAN_PATHS"):
+            if key in data:
+                raw = data.get(key)
+                if isinstance(raw, str):
+                    raw = raw.replace("\n", ",").split(",")
+                if not isinstance(raw, (list, tuple)):
+                    raw = []
+                vals = []
+                for it in raw:
+                    v = _norm_cfg_path(it)
+                    if v and v not in vals:
+                        vals.append(v)
+                payload[key] = vals
+                path_changes[key] = vals
+
         success, res = config.save_config(payload)
 
         if success:
@@ -317,6 +333,19 @@ def update_config():
         return jsonify({"success": False, "error": str(res)}), 500
     except Exception as e:  # noqa: BLE001
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _parse_paths_arg() -> list[str] | None:
+    """解析查询参数 paths（逗号分隔）。未传返回 None（表示用配置默认值）。"""
+    raw = request.args.get("paths")
+    if raw is None:
+        return None
+    out = []
+    for p in str(raw).replace("\n", ",").split(","):
+        v = _norm_cfg_path(p)
+        if v and v not in out:
+            out.append(v)
+    return out
 
 
 def _norm_cfg_path(raw) -> str:
@@ -465,7 +494,13 @@ def path_check():
 # ---------------------------------------------------------------------------
 @bp.route("/api/scan_duplicates", methods=["GET"])
 def api_scan_duplicates():
-    result = library.scan_duplicates()
+    """全库查重。
+
+    可选查询参数 paths（逗号分隔）：仅扫描指定目录，
+    不传则使用「影片查重」页设置的扫描路径。
+    """
+    paths = _parse_paths_arg()
+    result = library.scan_duplicates(paths)
     if result.get("success"):
         return jsonify(result)
     return jsonify(result), 500
@@ -483,7 +518,13 @@ def api_resolve_duplicates():
 # ---------------------------------------------------------------------------
 @bp.route("/api/scan_empty_folders", methods=["GET"])
 def api_scan_empty():
-    result = library.scan_empty_folders()
+    """空间猎犬扫描。
+
+    可选查询参数 paths（逗号分隔）：仅扫描指定目录，
+    不传则使用「空间猎犬」页设置的扫描路径。
+    """
+    paths = _parse_paths_arg()
+    result = library.scan_empty_folders(paths)
     if result.get("success"):
         return jsonify(result)
     return jsonify(result), 500
@@ -520,14 +561,17 @@ def api_status():
         {
             "success": True,
             "version": __version__,
-            "dry_run": config.get_dry_run(),
-            "ignore_leading_digits": config.get_ignore_leading_digits(),
+            "dry_run": config.get_dry_run(),            "ignore_leading_digits": config.get_ignore_leading_digits(),
             "db_webhook": config.get_db_webhook(),
             "strm_webhook": config.get_strm_webhook(),
             "mount_base_path": cfg.get("MOUNT_BASE_PATH"),
             "metadata_base_path": cfg.get("METADATA_BASE_PATH"),
             "watched": watched,
             "history_count": len(hist),
+            # 各任务页的扫描路径（空数组表示使用默认值）
+            "hound_scan_paths": config.hound_scan_paths(),
+            "dedup_scan_paths": config.dedup_scan_paths(),
+            "default_scan_paths": config.default_meta_scan_paths(),
         }
     )
 

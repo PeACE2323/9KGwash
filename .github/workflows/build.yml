@@ -138,6 +138,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_dedup_ui
 
+      - name: 运行任务扫描路径测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_task_paths
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

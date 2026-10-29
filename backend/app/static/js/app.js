@@ -13,7 +13,8 @@
     hound: { title: "空间猎犬", desc: "排查并清理本地无 STRM 的空壳目录" },
     dedup: { title: "影片查重", desc: "全库番号比对与一键洗板清理" },
     deliver: { title: "文件投递", desc: "关键字改名 + 按规则投递到指定目录" },
-    config: { title: "运行配置", desc: "Webhook、运行模式与路径查看" },
+    washcfg: { title: "洗版配置", desc: "洗版权重档位与存储路径" },
+    config: { title: "运行配置", desc: "Webhook 与运行模式" },
     logs: { title: "活动日志", desc: "洗板全过程实时输出" },
   };
 
@@ -173,11 +174,13 @@
       setTimeout(() => scrollLogToBottom(false), 60);
     }
     if (name === "deliver") loadDeliverConfig();
-    if (name === "config") {
-      // 路径配置需要 /api/status 的数据来回填，否则表单会是空的
+    if (name === "washcfg") {
+      // 洗版配置页：权重档位 + 存储路径（都需要 /api/status 回填）
       loadStatus();
       loadWeights();
     }
+    if (name === "config") loadStatus();
+    if (name === "hound" || name === "dedup") loadScanPaths(name);
   }
 
   /* ----------------------------- 主题切换 ----------------------------- */
@@ -1258,7 +1261,7 @@
       } else if (!hasWatch) {
         mountHint.textContent = "尚未配置监控目录，无法校验";
       } else if (mountOk) {
-        mountHint.textContent = `✅ 容器内可访问，示例：${watching[0].mount_path}`;
+        mountHint.textContent = `✅ 视频文件目录可访问（洗板实际扫描这里）：${watching[0].mount_path}`;
       } else {
         mountHint.textContent = `⚠️ 容器内找不到该目录，请检查 Docker 映射：${s.mount_base_path}`;
       }
@@ -1271,7 +1274,7 @@
       } else if (!hasWatch) {
         metaHint.textContent = "尚未配置监控目录，无法校验";
       } else if (metaOk) {
-        metaHint.textContent = `✅ 容器内可访问，示例：${watching[0].meta_path}`;
+        metaHint.textContent = `✅ 元数据目录可访问（nfo/poster/strm 所在）：${watching[0].meta_path}`;
       } else {
         metaHint.textContent = `⚠️ 容器内找不到该目录，请检查 Docker 映射：${s.metadata_base_path}`;
       }
@@ -1444,6 +1447,71 @@
     const start = initial || (state.lastStatus && state.lastStatus.mount_base_path) || "/";
     loadBrowser(start);
   }
+  /* -------------------- 猎犬 / 查重的独立扫描路径 -------------------- */
+  /** 读取并回填某任务页的扫描路径 */
+  function loadScanPaths(kind) {
+    const st = state.lastStatus;
+    if (!st) {
+      // 没有 status 时先拉一次
+      api("/api/status").then((s) => {
+        if (s && s.success) {
+          state.lastStatus = s;
+          fillScanPaths(kind, s);
+        }
+      });
+      return;
+    }
+    fillScanPaths(kind, st);
+  }
+
+  function fillScanPaths(kind, st) {
+    const el = $(kind + "-paths");
+    if (!el) return;
+    const list = (kind === "hound" ? st.hound_scan_paths : st.dedup_scan_paths) || [];
+    el.value = list.join("\n");
+
+    const hint = $(kind + "-paths-hint");
+    if (hint) {
+      const defaults = st.default_scan_paths || [];
+      if (list.length) {
+        hint.textContent = `共 ${list.length} 个扫描目录`;
+        hint.className = "field-hint";
+      } else if (defaults.length) {
+        hint.textContent = `未单独设置，将使用默认：${defaults.join(" , ")}`;
+        hint.className = "field-hint";
+      } else {
+        hint.textContent = "未设置扫描路径，且没有可用的默认目录";
+        hint.className = "field-hint bad";
+      }
+    }
+  }
+
+  async function saveScanPaths(kind) {
+    const el = $(kind + "-paths");
+    if (!el) return;
+    const vals = el.value
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const key = kind === "hound" ? "HOUND_SCAN_PATHS" : "DEDUP_SCAN_PATHS";
+    try {
+      const res = await apiPost("/api/config", { [key]: vals });
+      if (res.success) {
+        toast(kind === "hound" ? "空间猎犬扫描路径已保存" : "影片查重扫描路径已保存");
+        const s = await api("/api/status");
+        if (s && s.success) {
+          state.lastStatus = s;
+          fillScanPaths(kind, s);
+        }
+      } else {
+        toast("保存失败：" + (res.error || "未知错误"));
+      }
+    } catch (e) {
+      toast("保存失败：" + e.message);
+    }
+  }
+
   /* ----------------------------- 概览 ----------------------------- */
   function setStat(id, text, cls) {
     const el = $(id);
@@ -1957,6 +2025,20 @@
     $("hound-scan-btn").addEventListener("click", scanEmptyFolders);
     $("hound-del-btn").addEventListener("click", deleteEmptyFolders);
     $("hound-cancel-btn").addEventListener("click", cancelHound);
+
+    // 猎犬/查重的扫描路径：保存 + 浏览
+    document.querySelectorAll(".scan-path-save").forEach((btn) => {
+      btn.addEventListener("click", () => saveScanPaths(btn.dataset.kind));
+    });
+    document.querySelectorAll(".scan-path-browse").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        browserTargetId = $(btn.dataset.target);
+        $("browser").hidden = false;
+        const st = state.lastStatus || {};
+        const start = st.metadata_base_path || st.mount_base_path || "/";
+        loadBrowser(start);
+      });
+    });
 
     $("dedup-scan-btn").addEventListener("click", scanDuplicates);
     $("dedup-wash-btn").addEventListener("click", resolveDuplicates);

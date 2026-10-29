@@ -33,6 +33,10 @@ DEFAULT_CONFIG = {
     "WEIGHT_ORDER": ["UC", "C", "U", "NORMAL"],
     # 自定义权重档位：[{"id":"xxx","name":"4K","keywords":["4K","2160p"]}]
     "WEIGHT_CUSTOM": [],
+    # 空间猎犬扫描路径（空 = 使用元数据侧监听目录）
+    "HOUND_SCAN_PATHS": [],
+    # 影片查重扫描路径（空 = 使用元数据侧监听目录）
+    "DEDUP_SCAN_PATHS": [],
 }
 
 # ---------------------------------------------------------------------------
@@ -370,6 +374,45 @@ def metadata_base_path() -> str:
 
 def watched_dirs() -> list[str]:
     return list(current_config().get("WATCHED_DIRS", []) or [])
+
+
+def _norm_path_list(raw) -> list[str]:
+    """把路径列表规范化为去重后的字符串列表（保留用户原样顺序）。"""
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple)) else str(raw).replace("\n", ",").split(",")
+    out, seen = [], set()
+    for it in items:
+        v = _norm_slash(it)
+        if not v or v == "/":
+            continue
+        if v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
+
+def hound_scan_paths() -> list[str]:
+    """空间猎犬的扫描路径；未配置时回退到元数据侧监听目录。"""
+    paths = _norm_path_list(current_config().get("HOUND_SCAN_PATHS"))
+    return paths or default_meta_scan_paths()
+
+
+def dedup_scan_paths() -> list[str]:
+    """影片查重的扫描路径；未配置时回退到元数据侧监听目录。"""
+    paths = _norm_path_list(current_config().get("DEDUP_SCAN_PATHS"))
+    return paths or default_meta_scan_paths()
+
+
+def default_meta_scan_paths() -> list[str]:
+    """默认扫描路径：各监听目录对应的元数据侧路径。"""
+    out = []
+    for w in watched_dirs():
+        p = meta_path_for(w)
+        if p and p not in out:
+            out.append(p)
+    return out
 
 
 # ---------------------------------------------------------------------------

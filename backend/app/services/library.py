@@ -61,25 +61,49 @@ def _aux_dirs() -> set:
     return MOVIE_AUX_DIRS
 
 
-def meta_scan_paths() -> list[str]:
+def meta_scan_paths(kind: str = "dedup") -> list[str]:
+    """返回实际用于扫描的路径列表（已过滤掉不存在的）。
+
+    kind:
+        "dedup" —— 影片查重，优先用 DEDUP_SCAN_PATHS
+        "hound" —— 空间猎犬，优先用 HOUND_SCAN_PATHS
+    两者未单独配置时，回退到「各监听目录对应的元数据侧路径」。
+    """
+    if kind == "hound":
+        candidates = config.hound_scan_paths()
+    else:
+        candidates = config.dedup_scan_paths()
+
     paths = []
-    for w in config.watched_dirs():
-        meta_path = config.meta_path_for(w)
-        if os.path.exists(meta_path):
-            paths.append(meta_path)
+    for p in candidates:
+        if p and os.path.isdir(p) and p not in paths:
+            paths.append(p)
     return paths
 
 
 # ---------------------------------------------------------------------------
 # 1. 全库查重扫描
 # ---------------------------------------------------------------------------
-def scan_duplicates() -> dict:
+def scan_duplicates(paths: list[str] | None = None) -> dict:
+    """全库查重。
+
+    paths 为 None 时使用配置里的查重扫描路径；
+    传入时只扫描这些目录（供 API 按界面设定执行）。
+    """
     logger.info("🔍 [全库查重] 启动本地媒体库查重扫描，正在进行极速预检...")
-    scan_paths = meta_scan_paths()
+
+    if paths is None:
+        scan_paths = meta_scan_paths("dedup")
+    else:
+        scan_paths = [p for p in paths if p and os.path.isdir(p)]
 
     if not scan_paths:
-        logger.warning("🔍 [全库查重] 未发现有效的本地元数据监听目录！")
-        return {"success": True, "duplicates": []}
+        logger.warning(
+            "🔍 [全库查重] 未发现有效的扫描目录！请检查「影片查重」页设置的扫描路径。"
+        )
+        return {"success": True, "duplicates": [], "scan_paths": []}
+
+    logger.info("🔍 [全库查重] 本次扫描目录: " + ", ".join(scan_paths))
 
     def count_target_folders(base_path):
         count = 0
@@ -96,7 +120,7 @@ def scan_duplicates() -> dict:
 
     if total_folders == 0:
         logger.info("🔍 [全库查重] 本地目录为空，未发现任何可检查节点。")
-        return {"success": True, "duplicates": []}
+        return {"success": True, "duplicates": [], "scan_paths": scan_paths}
 
     logger.info(f"🔍 [全库查重] 本地预检完毕！共锁定 {total_folders} 个目录节点，正式开始查重与聚类...")
     scanned_count = 0
@@ -180,7 +204,7 @@ def scan_duplicates() -> dict:
         logger.info(
             f"🔍 [全库查重] 查重比对圆满完成！共检索 {total_files_indexed} 部本地媒体，锁定 {len(duplicates_result)} 组重复影片。"
         )
-        return {"success": True, "duplicates": duplicates_result}
+        return {"success": True, "duplicates": duplicates_result, "scan_paths": scan_paths}
     except Exception as e:  # noqa: BLE001
         logger.error(f"🔍 [全库查重] 扫描异常中断: {e}")
         return {"success": False, "error": str(e)}
@@ -286,7 +310,12 @@ def resolve_duplicates(duplicates: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # 3. 空间猎犬：本地空壳目录扫描 / 删除
 # ---------------------------------------------------------------------------
-def scan_empty_folders() -> dict:
+def scan_empty_folders(paths: list[str] | None = None) -> dict:
+    """空间猎犬：扫描空壳目录。
+
+    paths 为 None 时使用配置里的猎犬扫描路径；
+    传入时只扫描这些目录（供 API 按界面设定执行）。
+    """
     empty_meta: list[str] = []
     logger.info("🧽 [空间猎犬] 启动本地空壳目录扫描，正在进行极速预检...")
     total_folders = 0
@@ -304,16 +333,40 @@ def scan_empty_folders() -> dict:
         return count
 
     try:
+        if paths is None:
+            candidates = config.hound_scan_paths()
+        else:
+            candidates = [p for p in paths if p]
+
         meta_paths = []
-        for w in config.watched_dirs():
-            meta_path = config.meta_path_for(w)
-            if os.path.exists(meta_path):
+        for meta_path in candidates:
+            if meta_path and os.path.isdir(meta_path) and meta_path not in meta_paths:
                 meta_paths.append(meta_path)
                 total_folders += count_target_folders(meta_path)
 
+        if not meta_paths:
+            logger.warning(
+                "🧽 [空间猎犬] 未发现有效的扫描目录！请检查「空间猎犬」页设置的扫描路径。"
+            )
+            return {
+                "success": True,
+                "empty_mount": [],
+                "empty_meta": [],
+                "scan_paths": [],
+                "total_folders": 0,
+            }
+
+        logger.info("🧽 [空间猎犬] 本次扫描目录: " + ", ".join(meta_paths))
+
         if total_folders == 0:
-            logger.info("🧽 [空间猎犬] 预检完毕，未发现任何本地监听目录。")
-            return {"success": True, "empty_mount": [], "empty_meta": []}
+            logger.info("🧽 [空间猎犬] 预检完毕，扫描目录下没有任何节点。")
+            return {
+                "success": True,
+                "empty_mount": [],
+                "empty_meta": [],
+                "scan_paths": meta_paths,
+                "total_folders": 0,
+            }
 
         logger.info(f"🧽 [空间猎犬] 预检完成！共计 {total_folders} 个本地目录节点，正式开始查杀排雷...")
         scanned_count = 0
@@ -342,7 +395,13 @@ def scan_empty_folders() -> dict:
         logger.info(
             f"🧽 [空间猎犬] 扫描圆满结束！100% 本地极速排查完毕。最终锁定 {len(empty_meta)} 个僵尸目录。"
         )
-        return {"success": True, "empty_mount": [], "empty_meta": empty_meta}
+        return {
+            "success": True,
+            "empty_mount": [],
+            "empty_meta": empty_meta,
+            "scan_paths": meta_paths,
+            "total_folders": total_folders,
+        }
     except Exception as e:  # noqa: BLE001
         logger.error(f"🧽 [空间猎犬] 扫描过程遭遇异常: {e}")
         return {"success": False, "error": str(e)}

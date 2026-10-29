@@ -194,7 +194,14 @@ body {
   cursor: pointer;
   transition: background 0.16s ease, color 0.16s ease;
 }
-.nav-item:hover { background: rgba(148, 163, 184, 0.1); color: #fff; }
+/* 悬停用主题强调色而不是纯白：浅色主题下白字看不清 */
+.nav-item:hover {
+  background: rgba(236, 72, 153, 0.12);
+  color: var(--pink-soft);
+}
+.nav-item:hover .nav-icon {
+  transform: scale(1.08);
+}
 .nav-item.active {
   background: linear-gradient(135deg, rgba(236, 72, 153, 0.28), rgba(168, 85, 247, 0.2));
   color: #fff;
@@ -1683,7 +1690,8 @@ html[data-theme="light"] .log-box {
 }
 
 html[data-theme="light"] .nav-item:hover {
-  background: rgba(15, 23, 42, 0.05);
+  background: rgba(219, 39, 119, 0.1);
+  color: var(--pink-soft);
 }
 
 html[data-theme="light"] .nav-item.active {
@@ -1991,4 +1999,36 @@ html[data-theme="light"] .w-badge-custom {
 }
 #weight-modal .path-input {
   width: 100%;
+}
+
+/* ---------- 任务页的扫描路径设置 ---------- */
+.scan-path-row {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--border-strong);
+  background: rgba(148, 163, 184, 0.05);
+}
+.scan-path-row .field > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.scan-path-row .path-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.scan-path-row .path-textarea {
+  flex: 1 1 auto;
+  min-height: 52px;
+  font-size: 12.5px;
+}
+.scan-path-row .btn { flex: 0 0 auto; }
+
+@media (max-width: 640px) {
+  .scan-path-row .path-input-row { flex-wrap: wrap; }
+  .scan-path-row .path-textarea { flex: 1 1 100%; }
 }
