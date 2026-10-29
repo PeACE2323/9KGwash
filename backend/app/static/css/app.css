@@ -612,12 +612,17 @@ select option { background: var(--bg-inset); }
 .dup-title {
   font-size: 13.5px;
   font-weight: 700;
-  color: var(--pink-soft);
-  cursor: pointer;
+  /* 用中性色作主文本，把粉色留给右侧可点击的番号徽章，
+     避免两者色系重合、让人分不清哪里可以点 */
+  color: var(--text);
   font-family: var(--mono);
   word-break: break-all;
+  cursor: default;
+  user-select: text;
 }
-.dup-title:hover { color: #fff; }
+.dup-title:hover {
+  filter: brightness(1.18);
+}
 .dup-raws { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
   font-family: var(--mono);
@@ -655,10 +660,12 @@ select option { background: var(--bg-inset); }
 .dup-file .tag {
   flex: 0 0 auto;
   font-size: 12px;
+  font-weight: 600;
   padding: 0 6px;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.14);
-  color: var(--text-dim);
+  background: rgba(148, 163, 184, 0.2);
+  /* 用实色、不透明，保证浅色/深色主题下都清晰 */
+  color: var(--text);
 }
 
 /* ---------------- 日志 ---------------- */

@@ -1824,9 +1824,7 @@
           .join("");
         return (
           '<div class="dup-group"><div class="dup-head">' +
-          '<span class="dup-title" data-copy="' +
-          escapeHtml(item.canonical_fanhao) +
-          '" title="点击复制主番号">#' +
+          '<span class="dup-title" title="重复影片的主番号">#' +
           (idx + 1) +
           " 【" +
           escapeHtml(item.canonical_fanhao) +
