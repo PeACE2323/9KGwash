@@ -23,6 +23,55 @@ logger = categorized("emby")
 # ---------------------------------------------------------------------------
 # CD2 / CMS 新增文件通知
 # ---------------------------------------------------------------------------
+def _resolve_cd2_path(file_rel_path: str, mount_base: str, watched: list[str]):
+    """由 CD2 传来的相对路径解析出「对应监听目录的相对子路径」。
+
+    CD2/CMS 传的是网盘内的相对路径，可能有两种写法：
+      A) 含网盘根内的顶层目录： /115open/9KG/STRM/xxx
+      B) 与网盘根平级：         /9KG/STRM/xxx
+
+    而配置里的监听目录也可能被归一成任意一种写法。
+    这里做双向兼容：找到最匹配的监听目录，然后把「监听目录之后的部分」
+    作为相对尾巴返回，避免把网盘根重复拼接两遍。
+
+    返回 (命中的监听目录, 相对尾巴)；未命中返回 ("", "")。
+    """
+    rel = "/" + str(file_rel_path or "").lstrip("/")
+
+    best_w, best_tail = "", ""
+    for w in watched:
+        w = "/" + str(w or "").lstrip("/").rstrip("/")
+        if not w or w == "/":
+            continue
+
+        # 写法 A：路径以监听目录开头 -> 尾巴是监听目录之后的部分
+        if rel == w or rel.startswith(w + "/"):
+            tail = rel[len(w):]
+            # 选最长匹配（避免 /9KG 抢先匹配 /9KG/STRM）
+            if len(w) > len(best_w):
+                best_w, best_tail = w, tail
+            continue
+
+        # 写法 B：监听目录出现在路径中（如 /9KG/STRM 出现在 /115open/9KG/STRM/x）
+        marker = w + "/"
+        pos = rel.find(marker)
+        if pos > 0:
+            tail = rel[pos + len(w):]
+            if len(w) > len(best_w):
+                best_w, best_tail = w, tail
+            continue
+
+        # 写法 C：路径正好以监听目录结尾（无后续文件），尾巴为空
+        if rel.endswith(w):
+            pos = rel.rfind(w)
+            if pos > 0:
+                tail = rel[pos + len(w):]
+                if len(w) > len(best_w):
+                    best_w, best_tail = w, tail
+
+    return best_w, best_tail
+
+
 def handle_cd2(payload) -> None:
     if not payload or "data" not in payload:
         return
@@ -34,10 +83,18 @@ def handle_cd2(payload) -> None:
         if item.get("action") in ["create", "rename"] and str(item.get("is_dir", "false")).lower() == "false":
             file_rel_path = item.get("destination_file") or item.get("source_file", "")
 
-            if not any(file_rel_path.startswith(d) for d in watched):
+            hit_dir, tail = _resolve_cd2_path(file_rel_path, mount_base, watched)
+            if not hit_dir:
+                # 不属于监听目录：不处理，但留下痕迹，避免以后排查时「毫无日志」
+                logger.info(
+                    f"⏭️ [跳过] 不属于任何监听目录: {file_rel_path} "
+                    f"(当前监听目录: {', '.join(watched) or '未配置'})"
+                )
                 continue
 
-            local_file_path = mount_base + file_rel_path
+            # 用「监听目录对应的网盘绝对路径 + 尾巴」拼出真实本地路径，
+            # 这样无论 CD2 传的是哪种写法，都不会把网盘根重复拼接。
+            local_file_path = config.mount_path_for(hit_dir) + tail
             basename = os.path.basename(local_file_path)
 
             logger.info(f"🚀 [通关] 新增目标视频 [{basename}]，开始智能等待挂载同步...")
