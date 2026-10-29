@@ -145,20 +145,42 @@ def get_weight_order():
     """返回当前权重档位顺序与说明，供前端渲染可拖动面板。"""
     order = config.get_weight_order()
     wmap = config.get_weight_map()
-    return jsonify(
-        {
-            "success": True,
-            "order": order,
-            "weights": wmap,
-            "tiers": [
+    custom = config.get_weight_custom()
+    custom_map = {config.CUSTOM_TIER_PREFIX + c["id"]: c for c in custom}
+
+    tiers = []
+    for t in order:
+        if t in custom_map:
+            c = custom_map[t]
+            tiers.append(
+                {
+                    "key": t,
+                    "label": c.get("name") or "自定义",
+                    "desc": "命中关键字：" + "、".join(c.get("keywords") or []),
+                    "weight": wmap.get(t, 0),
+                    "is_custom": True,
+                    "custom_id": c["id"],
+                    "keywords": list(c.get("keywords") or []),
+                }
+            )
+        else:
+            tiers.append(
                 {
                     "key": t,
                     "label": config.WEIGHT_TIER_LABELS.get(t, t),
                     "desc": config.WEIGHT_TIER_DESC.get(t, ""),
                     "weight": wmap.get(t, 0),
+                    "is_custom": False,
                 }
-                for t in order
-            ],
+            )
+
+    return jsonify(
+        {
+            "success": True,
+            "order": order,
+            "weights": wmap,
+            "tiers": tiers,
+            "custom": custom,
             "default_order": config.DEFAULT_WEIGHT_ORDER,
         }
     )
@@ -166,15 +188,31 @@ def get_weight_order():
 
 @bp.route("/api/weight", methods=["POST"])
 def update_weight_order():
-    """保存权重档位顺序（实时生效，无需重启）。"""
+    """保存权重档位顺序与自定义档位（实时生效，无需重启）。
+
+    请求体：
+        order   档位顺序数组（可含内置档与 custom:<id>）
+        custom  自定义档位数组（可选；传了则整体替换）
+    """
     try:
         data = request.get_json(silent=True) or {}
         raw = data.get("order")
         if not isinstance(raw, list) or not raw:
             return jsonify({"success": False, "error": "order 必须是非空数组"}), 400
 
-        new_order = config.normalize_weight_order(raw)
-        ok, res = config.save_config({"WEIGHT_ORDER": new_order})
+        payload: dict = {}
+
+        # 自定义档位先落地，顺序规范化需要知道有哪些自定义档
+        if "custom" in data:
+            custom = config.normalize_weight_custom(data.get("custom"))
+            payload["WEIGHT_CUSTOM"] = custom
+        else:
+            custom = config.get_weight_custom()
+
+        new_order = config.normalize_weight_order(raw, custom)
+        payload["WEIGHT_ORDER"] = new_order
+
+        ok, res = config.save_config(payload)
         if not ok:
             return jsonify({"success": False, "error": str(res)}), 500
 
@@ -188,7 +226,19 @@ def update_weight_order():
             + " | 权重值 "
             + ", ".join(f"{k}={v}" for k, v in wmap.items())
         )
-        return jsonify({"success": True, "order": new_order, "weights": wmap})
+        if custom:
+            logger.info(
+                "⚖️ [权重] 自定义档位: "
+                + "; ".join(f"{c['name']}({'/'.join(c['keywords'])})" for c in custom)
+            )
+        return jsonify(
+            {
+                "success": True,
+                "order": new_order,
+                "weights": wmap,
+                "custom": custom,
+            }
+        )
     except Exception as e:  # noqa: BLE001
         return jsonify({"success": False, "error": str(e)}), 500
 

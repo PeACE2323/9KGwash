@@ -126,13 +126,17 @@ def get_weight_and_fanhao(filename: str):
     """返回 (root_fanhao, weight, is_part)。
 
     权重由「档位顺序」决定，可在前端拖动调整。
-    默认档位（高 -> 低）：UC > C > U > NORMAL，对应权重 3 / 2 / 1 / 0。
+    默认内置档位（高 -> 低）：UC > C > U > NORMAL，对应权重 3 / 2 / 1 / 0。
 
-    档位含义：
+    内置档位含义：
         UC      = 中字 + 无码/破解（同时含 C 与 U 标记）
         C       = 仅中字
         U       = 仅无码/破解
         NORMAL  = 普通，无上述标记
+
+    自定义档位（用户配置的一组关键字）与内置档位一起混排：
+        - 一个文件可能同时命中多个档位，**取顺序最高（权重最大）的那个**
+        - 自定义关键字不分大小写
     """
     basename = os.path.splitext(filename)[0]
     canonical, raw, _ = parse_fanhao_info(basename)
@@ -143,17 +147,31 @@ def get_weight_and_fanhao(filename: str):
         has_c = bool(_HAS_C_RE.search(upper_base))
         has_u = bool(_HAS_U_RE.search(upper_base))
 
-        # 判定所属档位
+        # 计算该文件命中的所有档位
+        hits: list[str] = []
         if has_c and has_u:
-            tier = "UC"
-        elif has_c:
-            tier = "C"
-        elif has_u:
-            tier = "U"
-        else:
-            tier = "NORMAL"
+            hits.append("UC")
+        if has_c:
+            hits.append("C")
+        if has_u:
+            hits.append("U")
 
-        weight = config.get_weight_for_tier(tier)
+        # 自定义档位：任一关键字命中即算该档
+        lowered = basename.lower()
+        for c in config.get_weight_custom():
+            kws = c.get("keywords") or []
+            if any(str(k).strip() and str(k).strip().lower() in lowered for k in kws):
+                hits.append(config.CUSTOM_TIER_PREFIX + str(c.get("id")))
+
+        if not hits:
+            hits.append("NORMAL")
+
+        # 按当前拖动顺序取最优：order 越靠前权重越高
+        order = config.get_weight_order()
+        rank = {t: i for i, t in enumerate(order)}
+        best = min(hits, key=lambda t: rank.get(t, len(order)))
+
+        weight = config.get_weight_for_tier(best)
 
         root_fanhao = canonical if config.get_ignore_leading_digits() else raw
         return root_fanhao, weight, is_part

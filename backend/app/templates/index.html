@@ -305,11 +305,17 @@
             <p class="view-tip">
               洗板对决时，<strong>排在上面的档位优先级更高</strong>，权重高者保留、低者被清理。
               拖动卡片左侧 ⠿ 或点 ▲▼ 调整顺序，保存后<strong>实时生效</strong>。
+              <br>
+              一个文件同时命中多个档位时，<strong>以排在最上面的那个档为准</strong>。
             </p>
             <div id="weight-list" class="weight-list">
               <div class="empty-hint">正在读取权重配置...</div>
             </div>
-            <button class="btn btn-primary btn-block" id="weight-save" style="margin-top:12px">
+
+            <button class="btn btn-ghost btn-block" id="weight-add-custom" style="margin-top:10px">
+              ➕ 添加自定义档位（按关键字）
+            </button>
+            <button class="btn btn-primary btn-block" id="weight-save" style="margin-top:10px">
               💾 保存权重顺序
             </button>
           </div>
@@ -432,14 +438,38 @@
       <span class="weight-text">
         <span class="weight-label"></span>
         <span class="weight-desc"></span>
+        <span class="weight-kws"></span>
       </span>
       <span class="weight-val"></span>
       <span class="weight-move">
         <button type="button" class="btn btn-ghost btn-xs weight-up" title="提高优先级">▲</button>
         <button type="button" class="btn btn-ghost btn-xs weight-down" title="降低优先级">▼</button>
+        <button type="button" class="btn btn-ghost btn-xs weight-edit" title="编辑该自定义档位">✏️</button>
+        <button type="button" class="btn btn-ghost btn-xs weight-del" title="删除该自定义档位">✕</button>
       </span>
     </div>
   </template>
+
+  <!-- 自定义权重档位编辑弹窗 -->
+  <div id="weight-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="weight-modal-title">添加自定义档位</h3>
+      <div class="path-form">
+        <label class="field">
+          <span>档位名称</span>
+          <input type="text" id="weight-name" class="path-input" placeholder="如：4K 原盘" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>关键字（回车或逗号确认，命中任一即归类到本档）</span>
+          <div class="kw-input" id="weight-keywords" data-placeholder="输入关键字后回车添加"></div>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="weight-modal-cancel">取消</button>
+        <button class="btn btn-primary" id="weight-modal-ok">确认</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 规则组卡片模板 -->
   <template id="group-tpl">

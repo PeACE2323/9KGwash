@@ -30,6 +30,7 @@
     loaded: { overview: false, hound: false, dedup: false, deliver: false },
     deliver: null, // 当前投递配置
     weightDefault: [], // 权重默认顺序（用于一键恢复）
+    weightCustom: [], // 自定义权重档位
     lastStatus: null, // 最近一次 /api/status 结果（路径表单与浏览起点会用到）
   };
 
@@ -252,6 +253,9 @@
     const tpl = $("weight-tpl");
     list.innerHTML = "";
 
+    // 记住最新的自定义档位，供保存时一起提交
+    state.weightCustom = (data.custom || []).slice();
+
     const tiers = data.tiers || [];
     if (!tiers.length) {
       list.innerHTML = '<div class="empty-hint">没有可用的权重档位</div>';
@@ -261,14 +265,45 @@
     tiers.forEach((t) => {
       const node = tpl.content.firstElementChild.cloneNode(true);
       node.dataset.tier = t.key;
+      node.dataset.customId = t.custom_id || "";
 
-      const [badgeText, badgeCls] = WEIGHT_BADGE[t.key] || [t.key, "w-badge-normal"];
+      const isCustom = !!t.is_custom;
+      const [badgeText, badgeCls] = isCustom
+        ? ["自定义", "w-badge-custom"]
+        : WEIGHT_BADGE[t.key] || [t.key, "w-badge-normal"];
       const badgeEl = node.querySelector(".weight-badge");
       badgeEl.textContent = badgeText;
       badgeEl.className = "weight-badge " + badgeCls;
 
       node.querySelector(".weight-label").textContent = t.label || t.key;
       node.querySelector(".weight-desc").textContent = t.desc || "";
+
+      // 自定义档位额外展示关键字小标签
+      const kwsEl = node.querySelector(".weight-kws");
+      if (isCustom && t.keywords && t.keywords.length) {
+        kwsEl.replaceChildren();
+        t.keywords.forEach((k) => {
+          const chip = document.createElement("span");
+          chip.className = "kw-mini";
+          chip.textContent = k;
+          kwsEl.appendChild(chip);
+        });
+      } else {
+        kwsEl.remove();
+      }
+
+      node.classList.toggle("is-custom", isCustom);
+
+      // 编辑/删除按钮只对自定义档位显示
+      const editBtn = node.querySelector(".weight-edit");
+      const delBtn = node.querySelector(".weight-del");
+      if (isCustom) {
+        editBtn.addEventListener("click", () => openWeightModal(t.custom_id));
+        delBtn.addEventListener("click", () => removeCustomTier(node));
+      } else {
+        editBtn.remove();
+        delBtn.remove();
+      }
 
       node.querySelector(".weight-up").addEventListener("click", () => moveWeight(node, -1));
       node.querySelector(".weight-down").addEventListener("click", () => moveWeight(node, 1));
@@ -278,6 +313,132 @@
 
     refreshWeightRanks();
     enableWeightDrag();
+  }
+
+  /* ------------------- 自定义权重档位 ------------------- */
+  let weightModalState = { customId: null, kw: null };
+
+  function openWeightModal(customId) {
+    const modal = $("weight-modal");
+    const custom = state.weightCustom || [];
+    const editing = customId ? custom.find((c) => c.id === customId) : null;
+
+    $("weight-modal-title").textContent = editing ? "编辑自定义档位" : "添加自定义档位";
+    $("weight-name").value = editing ? editing.name || "" : "";
+
+    const host = $("weight-keywords");
+    weightModalState.customId = editing ? editing.id : null;
+    weightModalState.kw = createKeywordInput(host, editing ? editing.keywords || [] : []);
+
+    modal.hidden = false;
+    setTimeout(() => $("weight-name").focus(), 50);
+  }
+
+  function closeWeightModal() {
+    $("weight-modal").hidden = true;
+    weightModalState = { customId: null, kw: null };
+  }
+
+  function confirmWeightModal() {
+    const name = ($("weight-name").value || "").trim();
+    const keywords = weightModalState.kw ? weightModalState.kw.get() : [];
+
+    if (!name) {
+      toast("请填写档位名称");
+      return;
+    }
+    if (!keywords.length) {
+      toast("请至少添加一个关键字");
+      return;
+    }
+
+    const custom = (state.weightCustom || []).slice();
+    if (weightModalState.customId) {
+      // 编辑已有档位
+      const idx = custom.findIndex((c) => c.id === weightModalState.customId);
+      if (idx >= 0) {
+        custom[idx] = { ...custom[idx], name, keywords };
+      }
+      weightMsg("档位已修改，记得保存", "busy");
+    } else {
+      // 新增档位，id 由后端最终生成；这里先给个临时 id
+      const tmpId = "tmp" + Date.now().toString(36);
+      custom.push({ id: tmpId, name, keywords });
+      weightMsg("已添加档位，记得保存", "busy");
+    }
+
+    state.weightCustom = custom;
+    closeWeightModal();
+    rerenderWeightsWithCustom();
+  }
+
+  /** 用本地 state.weightCustom 重绘（无需重新请求后端） */
+  function rerenderWeightsWithCustom() {
+    const order = collectWeightOrder();
+    // 保持已有顺序，新档位追加到末尾
+    const custom = state.weightCustom || [];
+    const known = new Set(custom.map((c) => "custom:" + c.id));
+    const newOrder = order.filter((t) => !t.startsWith("custom:") || known.has(t));
+    custom.forEach((c) => {
+      const key = "custom:" + c.id;
+      if (!newOrder.includes(key)) newOrder.push(key);
+    });
+
+    // 构造一份与后端 GET 返回同构的数据
+    const total = newOrder.length;
+    const tiers = newOrder.map((key, idx) => {
+      if (key.startsWith("custom:")) {
+        const id = key.slice("custom:".length);
+        const c = custom.find((x) => x.id === id) || { name: "自定义", keywords: [] };
+        return {
+          key,
+          label: c.name,
+          desc: "命中关键字：" + (c.keywords || []).join("、"),
+          weight: total - 1 - idx,
+          is_custom: true,
+          custom_id: id,
+          keywords: c.keywords || [],
+        };
+      }
+      const isBuiltin = WEIGHT_BADGE[key];
+      return {
+        key,
+        label: isBuiltin ? key : key,
+        desc: "",
+        weight: total - 1 - idx,
+        is_custom: false,
+      };
+    });
+
+    // 内置档位的中文说明从 DOM 已有内容里继承，避免丢文案
+    const prevDesc = {};
+    document.querySelectorAll("#weight-list .weight-item").forEach((n) => {
+      if (!n.dataset.customId) {
+        prevDesc[n.dataset.tier] = {
+          label: n.querySelector(".weight-label").textContent,
+          desc: n.querySelector(".weight-desc").textContent,
+        };
+      }
+    });
+    tiers.forEach((t) => {
+      if (!t.is_custom && prevDesc[t.key]) {
+        t.label = prevDesc[t.key].label;
+        t.desc = prevDesc[t.key].desc;
+      }
+    });
+
+    renderWeights({ tiers, custom });
+  }
+
+  function removeCustomTier(node) {
+    const id = node.dataset.customId;
+    if (!id) return;
+    const c = (state.weightCustom || []).find((x) => x.id === id);
+    if (!confirm(`确定删除自定义档位「${c ? c.name : id}」吗？`)) return;
+    state.weightCustom = (state.weightCustom || []).filter((x) => x.id !== id);
+    node.remove();
+    refreshWeightRanks();
+    weightMsg("档位已删除，记得保存", "busy");
   }
 
   function moveWeight(node, dir) {
@@ -355,14 +516,30 @@
       const res = await api("/api/weight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order }),
+        body: JSON.stringify({
+          order,
+          // 自定义档位一并提交（临时 id 由后端重新分配）
+          custom: (state.weightCustom || []).map((c) => ({
+            id: c.id,
+            name: c.name,
+            keywords: c.keywords || [],
+          })),
+        }),
       });
       if (res.success) {
         weightMsg("✅ 已保存并实时生效", "ok");
-        toast("权重顺序已更新：" + res.order.join(" > "));
+        const names = res.order.map((k) => {
+          if (k.startsWith("custom:")) {
+            const id = k.slice("custom:".length);
+            const c = (res.custom || []).find((x) => x.id === id);
+            return c ? c.name : "自定义";
+          }
+          return k;
+        });
+        toast("权重顺序已更新：" + names.join(" > "));
         loadWeights();
       } else {
-        weightMsg("❌ 保存失败", "err");
+        weightMsg("❌ " + (res.error || "保存失败"), "err");
       }
     } catch (e) {
       weightMsg("❌ 网络异常", "err");
@@ -1801,6 +1978,14 @@
       });
       toast("已恢复默认权重顺序");
       loadWeights();
+    });
+
+    // 自定义权重档位
+    $("weight-add-custom").addEventListener("click", () => openWeightModal(null));
+    $("weight-modal-cancel").addEventListener("click", closeWeightModal);
+    $("weight-modal-ok").addEventListener("click", confirmWeightModal);
+    $("weight-modal").addEventListener("click", (e) => {
+      if (e.target.id === "weight-modal") closeWeightModal();
     });
     $("pause-btn").addEventListener("click", toggleLogPause);
     $("clear-btn").addEventListener("click", () => {

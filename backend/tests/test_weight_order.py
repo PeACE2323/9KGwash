@@ -95,13 +95,16 @@ d = set_order(["U", "UC", "C", "NORMAL"])
 check("保存成功", d.get("success") is True, d)
 check("顺序已更新", config.get_weight_order() == ["U", "UC", "C", "NORMAL"], config.get_weight_order())
 check("U 变为最高权重 3", w("U") == 3, w("U"))
-check("UC 变为 2", w("UC") == 2, w("UC"))
+# 注意：ABF-391-UC 同时含 C 与 U 标记，会同时命中 UC 与 U 两档。
+# 按「取顺序最高档」的语义，U 排第一时该文件算 U 档 -> 权重 3。
+check("UC 样本（-UC 也含 U 标记）取更高的 U 档 = 3", w("UC") == 3, w("UC"))
 check("C 变为 1", w("C") == 1, w("C"))
 check("普通 仍为 0", w("NORMAL") == 0, w("NORMAL"))
 
 d = set_order(["NORMAL", "U", "C", "UC"])
 check("普通放最高 -> 权重 3", w("NORMAL") == 3, w("NORMAL"))
-check("UC 放最低 -> 权重 0", w("UC") == 0, w("UC"))
+# -UC 样本同时命中 U（排第 2，权重 2）与 C，取更高的 U 档
+check("UC 放最低时 -UC 样本取 U 档 = 2", w("UC") == 2, w("UC"))
 
 # ===========================================================================
 print("\n=== C. 输入规范化 ===")

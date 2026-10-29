@@ -29,13 +29,17 @@ DEFAULT_CONFIG = {
     "STRM_WEBHOOK": "",
     "IGNORE_LEADING_DIGITS": True,
     # 洗板权重档位顺序（高 -> 低），可在前端拖动调整
+    # 可包含内置档位（UC / C / U / NORMAL）与自定义档位（custom:<id>）
     "WEIGHT_ORDER": ["UC", "C", "U", "NORMAL"],
+    # 自定义权重档位：[{"id":"xxx","name":"4K","keywords":["4K","2160p"]}]
+    "WEIGHT_CUSTOM": [],
 }
 
 # ---------------------------------------------------------------------------
 # 洗板权重档位
 # ---------------------------------------------------------------------------
-# 档位固定 4 个，含义不可变，只有「先后顺序」可调。
+# 内置档位固定 4 个，含义不可变，只有「先后顺序」可调。
+# 自定义档位（带关键字的）可以和内置档位一起混排。
 WEIGHT_TIERS = ("UC", "U", "C", "NORMAL")
 DEFAULT_WEIGHT_ORDER = ["UC", "C", "U", "NORMAL"]
 WEIGHT_TIER_LABELS = {
@@ -50,6 +54,9 @@ WEIGHT_TIER_DESC = {
     "U": "仅含无码/破解标记（无码/破解/流出/-U）",
     "NORMAL": "不含上述标记的普通版本",
 }
+
+# 自定义档位在 WEIGHT_ORDER 里的前缀，便于与内置档位区分
+CUSTOM_TIER_PREFIX = "custom:"
 
 # 只读路径项：这些只能通过 config.json / 环境变量调整，不在 WebUI 热更新范围内
 STRUCTURAL_KEYS = ("MOUNT_BASE_PATH", "METADATA_BASE_PATH", "WATCHED_DIRS")
@@ -67,29 +74,111 @@ _runtime = {
 }
 
 
-def normalize_weight_order(raw) -> list[str]:
-    """把任意输入规范为合法且完整的 4 档顺序。
+def normalize_weight_custom(raw) -> list[dict]:
+    """规范化自定义权重档位。
+
+    每个档位：
+        {"id": "...", "name": "4K", "keywords": ["4K", "2160p"]}
+    - id 自动生成，保证唯一
+    - name 为空时用「自定义N」
+    - keywords 统一为去重后的字符串列表（不分大小写去重）
+    - 没有任何关键字或名字的档位直接丢弃
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+
+    out: list[dict] = []
+    used_ids: set[str] = set()
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+
+        name = str(item.get("name") or "").strip()
+
+        kws = item.get("keywords")
+        if isinstance(kws, str):
+            kws = [x for x in kws.replace("，", ",").replace("、", ",").replace("\n", ",").split(",")]
+        if not isinstance(kws, (list, tuple)):
+            kws = []
+
+        clean: list[str] = []
+        seen: set[str] = set()
+        for k in kws:
+            v = str(k).strip()
+            if not v:
+                continue
+            key = v.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            clean.append(v)
+
+        if not clean:
+            continue
+        if not name:
+            name = f"自定义{idx + 1}"
+
+        cid = str(item.get("id") or "").strip()
+        # 生成稳定且唯一的 id
+        if not cid or cid in used_ids:
+            base = f"c{idx + 1}"
+            cid = base
+            n = 2
+            while cid in used_ids:
+                cid = f"{base}_{n}"
+                n += 1
+        used_ids.add(cid)
+
+        out.append({"id": cid, "name": name, "keywords": clean})
+
+    return out
+
+
+def _all_valid_tiers(custom: list[dict]) -> list[str]:
+    """当前全部合法档位：内置 4 档 + 自定义档。"""
+    return list(WEIGHT_TIERS) + [CUSTOM_TIER_PREFIX + c["id"] for c in custom]
+
+
+def normalize_weight_order(raw, custom: list[dict] | None = None) -> list[str]:
+    """把任意输入规范为合法且完整的档位顺序（高 -> 低）。
 
     - 只保留合法档位，去重
-    - 缺失的档位按默认顺序补到末尾（保证永远 4 个）
+    - 缺失的内置档位按默认顺序补到末尾（保证 4 个内置档始终都在）
+    - 自定义档位若没出现在顺序里，按定义顺序追加到最后
     """
+    if custom is None:
+        custom = normalize_weight_custom(current_config().get("WEIGHT_CUSTOM"))
+
+    valid = _all_valid_tiers(custom)
+
     if isinstance(raw, str):
         raw = [x.strip() for x in raw.replace("，", ",").split(",")]
-    order = []
+    order: list[str] = []
     for t in raw or []:
-        key = str(t).strip().upper()
-        if key in WEIGHT_TIERS and key not in order:
+        key = str(t).strip()
+        # 内置档位统一大写；自定义档位保持原样（前缀已小写）
+        if not key.lower().startswith(CUSTOM_TIER_PREFIX):
+            key = key.upper()
+        if key in valid and key not in order:
             order.append(key)
+
     for t in DEFAULT_WEIGHT_ORDER:
         if t not in order:
             order.append(t)
+
+    for c in custom:
+        t = CUSTOM_TIER_PREFIX + c["id"]
+        if t not in order:
+            order.append(t)
+
     return order
 
 
 def _build_weight_map(order: list[str]) -> dict:
     """顺序 -> 权重：第一个（最优先）权重最高。
 
-    4 档时为 3 / 2 / 1 / 0，与原有 UC>C>U>普通 完全等价。
+    仅 4 内置档时为 3 / 2 / 1 / 0，与原有 UC>C>U>普通 完全等价。
+    加入 n 个自定义档后，总档位数 N，最高档权重 N-1，最低 0。
     """
     n = len(order)
     return {tier: (n - 1 - idx) for idx, tier in enumerate(order)}
@@ -100,14 +189,32 @@ def _apply_runtime(conf: dict) -> None:
     _runtime["DB_ONLINE_WEBHOOK"] = conf.get("DB_ONLINE_WEBHOOK", "") or ""
     _runtime["STRM_WEBHOOK"] = conf.get("STRM_WEBHOOK", "") or ""
     _runtime["IGNORE_LEADING_DIGITS"] = bool(conf.get("IGNORE_LEADING_DIGITS", True))
-    order = normalize_weight_order(conf.get("WEIGHT_ORDER"))
+
+    custom = conf.get("WEIGHT_CUSTOM")
+    if not isinstance(custom, list):
+        custom = normalize_weight_custom(custom)
+    order = normalize_weight_order(conf.get("WEIGHT_ORDER"), custom)
     _runtime["WEIGHT_MAP"] = _build_weight_map(order)
+    _runtime["WEIGHT_ORDER"] = order
+    _runtime["WEIGHT_CUSTOM"] = custom
 
 
 def get_weight_order() -> list[str]:
-    """当前生效的权重档位顺序（高 -> 低）。"""
+    """当前生效的权重档位顺序（高 -> 低，含自定义档）。"""
     with _lock:
+        order = _runtime.get("WEIGHT_ORDER")
+        if order:
+            return list(order)
         return list(_config.get("WEIGHT_ORDER") or DEFAULT_WEIGHT_ORDER)
+
+
+def get_weight_custom() -> list[dict]:
+    """当前生效的自定义权重档位。"""
+    with _lock:
+        custom = _runtime.get("WEIGHT_CUSTOM")
+        if custom is None:
+            custom = _config.get("WEIGHT_CUSTOM") or []
+        return [dict(c) for c in custom]
 
 
 def get_weight_map() -> dict:
@@ -119,9 +226,17 @@ def get_weight_map() -> dict:
 
 
 def get_weight_for_tier(tier: str) -> int:
-    """取某档位的当前权重值；未知档位回退为最低。"""
+    """取某档位的当前权重值；未知档位回退为最低。
+
+    注意：内置档位键是大写的（UC/C/U/NORMAL），
+    自定义档位键是 ``custom:<id>``（小写前缀），
+    不能统一 upper()，否则自定义档永远查不到（会误判成最低权重）。
+    """
+    key = str(tier or "").strip()
+    if not key.lower().startswith(CUSTOM_TIER_PREFIX):
+        key = key.upper()
     m = get_weight_map()
-    return m.get(str(tier).upper(), 0)
+    return m.get(key, 0)
 
 
 def normalize_config(cfg: dict) -> dict:
@@ -135,7 +250,10 @@ def normalize_config(cfg: dict) -> dict:
     """
     out = dict(DEFAULT_CONFIG)
     out.update(cfg or {})
-    out["WEIGHT_ORDER"] = normalize_weight_order(out.get("WEIGHT_ORDER"))
+
+    # 先规范自定义档位，再据此补全顺序（顺序里可能含 custom:<id>）
+    out["WEIGHT_CUSTOM"] = normalize_weight_custom(out.get("WEIGHT_CUSTOM"))
+    out["WEIGHT_ORDER"] = normalize_weight_order(out.get("WEIGHT_ORDER"), out["WEIGHT_CUSTOM"])
 
     mount = _norm_slash(out.get("MOUNT_BASE_PATH") or "")
     raw_dirs = out.get("WATCHED_DIRS") or []

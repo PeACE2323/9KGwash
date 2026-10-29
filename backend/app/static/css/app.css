@@ -1915,3 +1915,73 @@ html[data-theme="light"] .log-tab.active .log-tab-count {
   .path-input-row { flex-wrap: wrap; }
   .path-input { flex: 1 1 100%; }
 }
+
+/* ---------- 自定义权重档位 ---------- */
+.weight-item.is-custom {
+  border-color: rgba(168, 85, 247, 0.42);
+  background: linear-gradient(
+    135deg,
+    rgba(168, 85, 247, 0.1),
+    rgba(236, 72, 153, 0.06)
+  );
+}
+
+.w-badge-custom {
+  color: #ddd6fe;
+  background: rgba(168, 85, 247, 0.22);
+  border: 1px solid rgba(168, 85, 247, 0.45);
+}
+
+.weight-kws {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.weight-kws:empty { display: none; }
+
+.weight-kws .kw-mini {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(168, 85, 247, 0.14);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  color: #ddd6fe;
+  white-space: nowrap;
+}
+
+html[data-theme="light"] .weight-kws .kw-mini {
+  background: rgba(124, 58, 237, 0.1);
+  border-color: rgba(124, 58, 237, 0.26);
+  color: #5b21b6;
+}
+html[data-theme="light"] .w-badge-custom {
+  color: #5b21b6;
+  background: rgba(124, 58, 237, 0.14);
+  border-color: rgba(124, 58, 237, 0.34);
+}
+
+/* 自定义档位的编辑/删除按钮更紧凑 */
+.weight-move .weight-edit,
+.weight-move .weight-del {
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1;
+}
+.weight-move .weight-del:hover {
+  color: var(--red-text);
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.12);
+}
+
+/* 自定义档位弹窗：修正 path-form 在弹窗内的间距与嵌套边框观感 */
+#weight-modal .path-form .field > span {
+  margin-bottom: 0;
+}
+#weight-modal .kw-input {
+  min-height: 40px;
+  padding: 6px 8px;
+}
+#weight-modal .path-input {
+  width: 100%;
+}
