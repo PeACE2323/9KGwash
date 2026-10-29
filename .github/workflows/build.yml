@@ -144,6 +144,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_task_paths
 
+      - name: 运行目录浏览白名单测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_browse_roots
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

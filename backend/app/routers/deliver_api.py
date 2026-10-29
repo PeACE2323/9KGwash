@@ -41,6 +41,92 @@ def _norm_path(p: str) -> str:
     q = q.rstrip("/")
     return q or ("/" if not is_windows else q)
 
+
+# 常见系统目录：即使没挂载也不允许浏览（避免用户误选后删错东西）
+_SYSTEM_PATH_DENY = {
+    "/proc", "/sys", "/dev", "/run", "/tmp", "/var", "/usr", "/lib",
+    "/lib64", "/bin", "/sbin", "/boot", "/etc", "/root", "/opt",
+}
+
+
+def _container_mount_points() -> list[str]:
+    """读取容器内所有挂载点（来自 /proc/mounts）。
+
+    这样无论用户把宿主机目录映射到容器的哪个位置
+    （/media、/clouddrive、/data ...），目录选择器都能浏览到。
+    """
+    points: list[str] = []
+    try:
+        with open("/proc/mounts", "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                mp = parts[1]
+                # 跳过根与明显的系统挂载
+                if not mp or mp == "/":
+                    continue
+                mp = mp.replace("\\040", " ")  # 空格转义
+                if mp in _SYSTEM_PATH_DENY:
+                    continue
+                # 跳过 /proc/xxx /sys/xxx 等子挂载
+                if any(mp.startswith(d + "/") for d in ("/proc", "/sys", "/dev", "/run")):
+                    continue
+                if mp not in points:
+                    points.append(mp)
+    except OSError:
+        pass
+    return points
+
+
+def _safe_allowed_roots() -> list[str]:
+    """计算目录浏览的白名单。
+
+    来源：
+      1) 当前配置的网盘根 / 元数据根（即使暂时不存在也允许，方便改错后返回）
+      2) 配置里各任务的自定义扫描路径
+      3) 容器内实际挂载点（/proc/mounts）
+      4) 若干历史默认路径
+      5) 环境变量 XIBAN_BROWSE_ROOTS 额外指定
+    """
+    roots = [
+        app_config.mount_base_path(),
+        app_config.metadata_base_path(),
+        "/media",
+        "/metadata",
+        "/clouddrive",
+        "/data",
+        "/deliver",
+    ]
+
+    # 各任务页自定义扫描路径
+    try:
+        roots.extend(app_config.hound_scan_paths())
+        roots.extend(app_config.dedup_scan_paths())
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 容器内真实挂载点
+    roots.extend(_container_mount_points())
+
+    extra = os.environ.get("XIBAN_BROWSE_ROOTS", "")
+    if extra:
+        roots.extend([p.strip() for p in extra.split(",") if p.strip()])
+
+    # 规范化 + 去重，并剔除系统目录
+    out, seen = [], set()
+    for r in roots:
+        v = _norm_path(r)
+        if not v or v == "/" or v in seen:
+            continue
+        if v in _SYSTEM_PATH_DENY:
+            continue
+        if any(v.startswith(d + "/") for d in ("/proc", "/sys", "/dev", "/run")):
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
 bp = Blueprint("deliver_api", __name__, url_prefix="/api/deliver")
 
 
@@ -103,47 +189,43 @@ def status():
 def browse():
     """列出某个目录下的子目录，供前端做目录选择器。
 
-    注意：不能用 os.path.realpath 做越权校验。
-    CD2 / rclone 等网盘挂载多为 FUSE 挂载点，realpath 可能解析到
-    挂载源或其它路径，导致挂载点下的合法子目录被误判为「越界」而过滤掉，
-    表现为「打开目录看不到里面的文件夹」。
-    这里统一用 normpath + 显式前缀比较（含大小写容错）。
+    注意两点：
+    1) 不能用 os.path.realpath 做越权校验。
+       CD2 / rclone 等网盘挂载多为 FUSE 挂载点，realpath 可能解析到
+       挂载源或其它路径，导致挂载点下的合法子目录被误判为「越界」而过滤掉，
+       表现为「打开目录看不到里面的文件夹」。
+    2) 白名单不能只写死历史路径。
+       用户可能把宿主机目录映射到容器任意位置（/clouddrive、/data ...），
+       因此这里会读 /proc/mounts 自动纳入容器内所有真实挂载点，
+       避免「改完 Docker 映射后连目录都选不了」。
     """
     path = (request.args.get("path") or "/").strip()
 
-    allowed_roots = [
-        app_config.mount_base_path(),
-        app_config.metadata_base_path(),
-        "/media",
-        "/metadata",
-        "/data",
-        "/deliver",
-    ]
-    extra = os.environ.get("XIBAN_BROWSE_ROOTS", "")
-    if extra:
-        allowed_roots.extend([p.strip() for p in extra.split(",") if p.strip()])
-
-    allowed_roots = [_norm_path(r) for r in allowed_roots if r]
-    # 去重，避免重复项
-    seen = set()
-    uniq_roots = []
-    for r in allowed_roots:
-        if r and r not in seen:
-            seen.add(r)
-            uniq_roots.append(r)
-    allowed_roots = uniq_roots
+    allowed_roots = _safe_allowed_roots()
 
     def is_allowed(p: str) -> bool:
         q = _norm_path(p)
         if q == "/":
             return True
+        # 系统目录一律不允许
+        if q in _SYSTEM_PATH_DENY:
+            return False
+        if any(q.startswith(d + "/") for d in ("/proc", "/sys", "/dev", "/run")):
+            return False
         for root in allowed_roots:
             if q == root or q.startswith(root.rstrip("/") + "/"):
                 return True
         return False
 
     if not is_allowed(path):
-        return jsonify({"success": False, "error": "该路径不在允许浏览的范围内"}), 403
+        hint = "、".join(allowed_roots[:6]) or "(无)"
+        return jsonify(
+            {
+                "success": False,
+                "error": f"该路径不在允许浏览的范围内。可浏览：{hint}",
+                "allowed_roots": allowed_roots,
+            }
+        ), 403
 
     if not os.path.isdir(path):
         return jsonify({"success": False, "error": f"目录不存在: {path}"}), 404
