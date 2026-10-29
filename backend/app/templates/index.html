@@ -38,7 +38,7 @@
           <span class="nav-icon">📊</span><span class="nav-label">运行概览</span>
         </button>
 
-        <span class="nav-group">洗板任务</span>
+        <span class="nav-group">洗板中心</span>
         <button class="nav-item" data-view="hound">
           <span class="nav-icon">🧽</span><span class="nav-label">空间猎犬</span>
         </button>
@@ -49,11 +49,11 @@
           <span class="nav-icon">📦</span><span class="nav-label">文件投递</span>
           <span class="nav-dot" id="nav-deliver-dot" title="监控已启用" style="display:none"></span>
         </button>
+        <button class="nav-item" data-view="washcfg">
+          <span class="nav-icon">⚖️</span><span class="nav-label">洗版权重与路径</span>
+        </button>
 
         <span class="nav-group">系统</span>
-        <button class="nav-item" data-view="washcfg">
-          <span class="nav-icon">⚖️</span><span class="nav-label">洗版配置</span>
-        </button>
         <button class="nav-item" data-view="config">
           <span class="nav-icon">⚙️</span><span class="nav-label">运行配置</span>
         </button>
@@ -361,6 +361,15 @@
                   <button type="button" class="btn btn-ghost btn-sm path-browse" data-target="cfg-meta">浏览</button>
                 </div>
                 <small class="field-hint" id="cfg-meta-hint"></small>
+              </label>
+
+              <label class="field">
+                <span>元数据子路径（网盘侧与元数据侧层级不一致时填）</span>
+                <div class="path-input-row">
+                  <input type="text" id="cfg-meta-sub" class="path-input"
+                         placeholder="留空自动推导；例如 /STRM" autocomplete="off">
+                </div>
+                <small class="field-hint" id="cfg-meta-sub-hint"></small>
               </label>
             </div>
 

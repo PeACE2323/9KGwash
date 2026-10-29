@@ -13,7 +13,7 @@
     hound: { title: "空间猎犬", desc: "排查并清理本地无 STRM 的空壳目录" },
     dedup: { title: "影片查重", desc: "全库番号比对与一键洗板清理" },
     deliver: { title: "文件投递", desc: "关键字改名 + 按规则投递到指定目录" },
-    washcfg: { title: "洗版配置", desc: "洗版权重档位与存储路径" },
+    washcfg: { title: "洗版权重与路径", desc: "洗版权重档位与存储路径" },
     config: { title: "运行配置", desc: "Webhook 与运行模式" },
     logs: { title: "活动日志", desc: "洗板全过程实时输出" },
   };
@@ -1225,18 +1225,20 @@
   let browserCurrent = "/";
   let browserRoots = [];
 
-  /** 路径配置表单：只包含「存储路径」两项（网盘根 / 元数据根） */
+  /** 路径配置表单：存储路径 + 元数据子路径覆盖 */
   const pathForm = { loaded: false, dirty: false };
 
   /** 把 /api/status 的数据回填到路径表单（用户正在编辑时不覆盖） */
   function fillPathForm(st) {
     const mountEl = $("cfg-mount");
     const metaEl = $("cfg-meta");
+    const subEl = $("cfg-meta-sub");
     if (!mountEl || !metaEl) return;
 
     if (!pathForm.loaded || !pathForm.dirty) {
       mountEl.value = st.mount_base_path || "";
       metaEl.value = st.metadata_base_path || "";
+      if (subEl) subEl.value = st.meta_subdir_override || "";
       pathForm.loaded = true;
       updatePathHints(st);
     }
@@ -1250,6 +1252,7 @@
     const watching = s.watched || [];
     const mountHint = $("cfg-mount-hint");
     const metaHint = $("cfg-meta-hint");
+    const subHint = $("cfg-meta-sub-hint");
 
     const mountOk = !!s.mount_base_path && watching.some((w) => w.mount_ok);
     const metaOk = !!s.metadata_base_path && watching.some((w) => w.meta_ok);
@@ -1259,7 +1262,7 @@
       if (!s.mount_base_path) {
         mountHint.textContent = "";
       } else if (!hasWatch) {
-        mountHint.textContent = "尚未配置监控目录，无法校验";
+        mountHint.textContent = "尚未配置监听目录，无法校验";
       } else if (mountOk) {
         mountHint.textContent = `✅ 视频文件目录可访问（洗板实际扫描这里）：${watching[0].mount_path}`;
       } else {
@@ -1272,13 +1275,28 @@
       if (!s.metadata_base_path) {
         metaHint.textContent = "";
       } else if (!hasWatch) {
-        metaHint.textContent = "尚未配置监控目录，无法校验";
+        metaHint.textContent = "尚未配置监听目录，无法校验";
       } else if (metaOk) {
         metaHint.textContent = `✅ 元数据目录可访问（nfo/poster/strm 所在）：${watching[0].meta_path}`;
       } else {
         metaHint.textContent = `⚠️ 容器内找不到该目录，请检查 Docker 映射：${s.metadata_base_path}`;
       }
       metaHint.className = "field-hint" + (hasWatch && !metaOk ? " bad" : "");
+    }
+
+    if (subHint) {
+      if (!hasWatch) {
+        subHint.textContent = "";
+        subHint.className = "field-hint";
+      } else {
+        const derived = watching[0].meta_path || "";
+        if (s.meta_subdir_override) {
+          subHint.textContent = `已手动指定，元数据侧实际访问：${derived}`;
+        } else {
+          subHint.textContent = `留空时自动推导，当前解析为：${derived}`;
+        }
+        subHint.className = "field-hint" + (hasWatch && !metaOk ? " bad" : "");
+      }
     }
 
     // 投递页的监控目录提示
@@ -1332,11 +1350,13 @@
     }, 350);
   }
 
-  /** 收集路径表单（只有两项） */
+  /** 收集路径表单 */
   function collectPathForm() {
+    const subEl = $("cfg-meta-sub");
     return {
       MOUNT_BASE_PATH: ($("cfg-mount").value || "").trim(),
       METADATA_BASE_PATH: ($("cfg-meta").value || "").trim(),
+      META_SUBDIR_OVERRIDE: subEl ? (subEl.value || "").trim() : "",
     };
   }
 
@@ -2204,8 +2224,8 @@
       if (btn) loadBrowser(btn.dataset.path);
     });
 
-    /* ---------- 存储路径表单（只有网盘根 / 元数据根） ---------- */
-    ["cfg-mount", "cfg-meta"].forEach((id) => {
+    /* ---------- 存储路径表单 ---------- */
+    ["cfg-mount", "cfg-meta", "cfg-meta-sub"].forEach((id) => {
       const el = $(id);
       if (!el) return;
       el.addEventListener("input", () => {

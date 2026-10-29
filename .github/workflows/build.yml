@@ -150,6 +150,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_browse_roots
 
+      - name: 运行配置持久化测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_config_persist
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

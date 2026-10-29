@@ -37,6 +37,10 @@ DEFAULT_CONFIG = {
     "HOUND_SCAN_PATHS": [],
     # 影片查重扫描路径（空 = 使用元数据侧监听目录）
     "DEDUP_SCAN_PATHS": [],
+    # 元数据子路径覆盖：当网盘侧与元数据侧层级不一致时使用。
+    # 例：网盘侧 /115open/9KG/STRM 而元数据侧只有 /STRM，
+    #     则设 "META_SUBDIR_OVERRIDE": "/STRM"
+    "META_SUBDIR_OVERRIDE": "",
 }
 
 # ---------------------------------------------------------------------------
@@ -518,14 +522,20 @@ def meta_subdir_for(watch_dir: str, meta_base: str | None = None) -> str:
     """由监听目录推导它在「元数据根」下的相对子路径（以 / 开头）。
 
     推导顺序：
-      1) 用户显式配置的 WATCHED_META_SUBDIRS 覆盖
-      2) 先归一掉网盘根（若填的是完整路径）
-      3) 历史约定：/115open/... 去掉这层
+      1) WATCHED_META_SUBDIRS 里对该监听目录的显式映射（最优先）
+      2) 全局 META_SUBDIR_OVERRIDE（所有监听目录统一用这个子路径）
+      3) 归一掉网盘根后，去掉 /115open 这一层
       4) 其余原样保留
+
+    之所以需要 2)：用户的 Docker 映射可能让网盘侧和元数据侧层级不一致，例如
+        网盘侧 /clouddrive/115open/9KG/STRM
+        元数据侧 /media/STRM
+    这时监听目录 /9KG/STRM 在元数据侧实际应为 /STRM，
+    只能靠显式配置表达。
 
     刻意不做「首层同名就去掉」这类启发式猜测：
     元数据侧往往也存在 9KG 这样的同名目录，猜测会把路径改错，
-    反而导致元数据清理找不到文件。需要特殊映射时用配置显式指定。
+    反而导致元数据清理找不到文件。
     """
     # 先归一：若填的是完整路径，剥离网盘根后再推导
     w, _err = resolve_watch_dir(watch_dir)
@@ -534,22 +544,31 @@ def meta_subdir_for(watch_dir: str, meta_base: str | None = None) -> str:
     if w == "/":
         return "/"
 
-    # 1) 用户显式覆盖（同时兼容原始写法与归一后的写法）
     cfg = current_config()
+
+    # 1) 针对具体监听目录的显式覆盖（同时兼容原始写法与归一后的写法）
     overrides = cfg.get("WATCHED_META_SUBDIRS") or {}
     if isinstance(overrides, dict):
         for key in (watch_dir, w):
             if key in overrides:
-                return _norm_slash(overrides[key])
+                return _norm_slash(overrides[key]) or "/"
 
-    # 2) 历史约定：/115open/... 去掉这层（元数据侧不存在 115open）
+    # 2) 全局统一覆盖
+    global_sub = cfg.get("META_SUBDIR_OVERRIDE")
+    if global_sub not in (None, ""):
+        sub = _norm_slash(global_sub)
+        # 允许写成 "/STRM" 或 "STRM"
+        if sub and sub != "/":
+            return sub
+
+    # 3) 历史约定：/115open/... 去掉这层（元数据侧不存在 115open）
     for prefix in LEGACY_MOUNT_ONLY_PREFIXES:
         if w == prefix:
             return "/"
         if w.startswith(prefix + "/"):
             return w[len(prefix):]
 
-    # 3) 原样
+    # 4) 原样
     return w
 
 

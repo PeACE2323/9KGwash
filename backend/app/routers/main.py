@@ -250,21 +250,31 @@ def update_weight_order():
 def update_config():
     """热更新配置。
 
-    支持字段（均可选，未提交的保持原值）：
+    支持字段（**均可选**，未提交的字段保持原值，绝不重置）：
         DB_ONLINE_WEBHOOK / STRM_WEBHOOK / DRY_RUN / IGNORE_LEADING_DIGITS
         MOUNT_BASE_PATH / METADATA_BASE_PATH / WATCHED_DIRS
+        HOUND_SCAN_PATHS / DEDUP_SCAN_PATHS
+
+    重要：早期实现会无条件把上面 4 个开关字段写进 payload，
+    导致「只保存路径」时把 webhook / DRY_RUN 等设置重置成默认值。
+    现在改为「只处理请求里真实出现的键」。
     """
     try:
         data = request.get_json(silent=True)
         if not data:
             return jsonify({"success": False, "error": "提交数据无效"}), 400
 
-        payload = {
-            "DB_ONLINE_WEBHOOK": str(data.get("DB_ONLINE_WEBHOOK", "") or "").strip(),
-            "STRM_WEBHOOK": str(data.get("STRM_WEBHOOK", "") or "").strip(),
-            "DRY_RUN": bool(data.get("DRY_RUN", True)),
-            "IGNORE_LEADING_DIGITS": bool(data.get("IGNORE_LEADING_DIGITS", False)),
-        }
+        payload = {}
+
+        # ---- 运行开关（仅当请求里出现该键时才更新）----
+        if "DB_ONLINE_WEBHOOK" in data:
+            payload["DB_ONLINE_WEBHOOK"] = str(data.get("DB_ONLINE_WEBHOOK") or "").strip()
+        if "STRM_WEBHOOK" in data:
+            payload["STRM_WEBHOOK"] = str(data.get("STRM_WEBHOOK") or "").strip()
+        if "DRY_RUN" in data:
+            payload["DRY_RUN"] = bool(data.get("DRY_RUN"))
+        if "IGNORE_LEADING_DIGITS" in data:
+            payload["IGNORE_LEADING_DIGITS"] = bool(data.get("IGNORE_LEADING_DIGITS"))
 
         # ---- 路径三项（可选，做了规范化与基本校验）----
         path_changes = {}
@@ -308,27 +318,36 @@ def update_config():
                 payload[key] = vals
                 path_changes[key] = vals
 
+        # ---- 元数据子路径覆盖（网盘侧与元数据侧层级不一致时用）----
+        if "META_SUBDIR_OVERRIDE" in data:
+            v = _norm_cfg_path(data.get("META_SUBDIR_OVERRIDE"))
+            payload["META_SUBDIR_OVERRIDE"] = v if v and v != "/" else ""
+            path_changes["META_SUBDIR_OVERRIDE"] = payload["META_SUBDIR_OVERRIDE"]
+
         success, res = config.save_config(payload)
 
         if success:
-            runtime_updates = {
-                "DB_ONLINE_WEBHOOK": payload["DB_ONLINE_WEBHOOK"],
-                "STRM_WEBHOOK": payload["STRM_WEBHOOK"],
-                "DRY_RUN": payload["DRY_RUN"],
-                "IGNORE_LEADING_DIGITS": payload["IGNORE_LEADING_DIGITS"],
-            }
+            # 只把本次真实提交的字段应用到运行期，未提交的保持不变
+            runtime_updates = {}
+            for key in ("DB_ONLINE_WEBHOOK", "STRM_WEBHOOK", "DRY_RUN", "IGNORE_LEADING_DIGITS"):
+                if key in payload:
+                    runtime_updates[key] = payload[key]
             # 路径变更立即生效：写入运行时，让所有推导函数立刻用新值
             for k, v in path_changes.items():
                 runtime_updates[k] = v
-            config.update_runtime(**runtime_updates)
+            if runtime_updates:
+                config.update_runtime(**runtime_updates)
 
             if path_changes:
                 logger.info(f"⚙️ [热更新] 路径配置已更新并生效: {path_changes}")
-            logger.info(
-                f"⚙️ [热更新] 网页在线修改配置成功！DRY_RUN={payload['DRY_RUN']}, "
-                f"忽略前置数字={payload['IGNORE_LEADING_DIGITS']}, "
-                f"STRM触发={payload['STRM_WEBHOOK']}"
-            )
+            if runtime_updates:
+                cfg = config.current_config()
+                logger.info(
+                    f"⚙️ [热更新] 配置已更新！DRY_RUN={cfg.get('DRY_RUN')}, "
+                    f"忽略前置数字={cfg.get('IGNORE_LEADING_DIGITS')}, "
+                    f"DB触发={cfg.get('DB_ONLINE_WEBHOOK') or '未配置'}, "
+                    f"STRM触发={cfg.get('STRM_WEBHOOK') or '未配置'}"
+                )
             return jsonify({"success": True, "config": config.current_config()})
         return jsonify({"success": False, "error": str(res)}), 500
     except Exception as e:  # noqa: BLE001
@@ -572,6 +591,7 @@ def api_status():
             "hound_scan_paths": config.hound_scan_paths(),
             "dedup_scan_paths": config.dedup_scan_paths(),
             "default_scan_paths": config.default_meta_scan_paths(),
+            "meta_subdir_override": cfg.get("META_SUBDIR_OVERRIDE") or "",
         }
     )
 
