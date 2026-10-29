@@ -108,6 +108,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_ext_isolation
 
+      - name: 运行路径配置测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_path_config
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

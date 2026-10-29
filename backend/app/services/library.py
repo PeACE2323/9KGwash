@@ -63,9 +63,8 @@ def _aux_dirs() -> set:
 
 def meta_scan_paths() -> list[str]:
     paths = []
-    meta_base = config.metadata_base_path().rstrip("/")
     for w in config.watched_dirs():
-        meta_path = (meta_base + w.replace("/115open/", "/")).rstrip("/")
+        meta_path = config.meta_path_for(w)
         if os.path.exists(meta_path):
             paths.append(meta_path)
     return paths
@@ -307,8 +306,7 @@ def scan_empty_folders() -> dict:
     try:
         meta_paths = []
         for w in config.watched_dirs():
-            meta_path = config.metadata_base_path().rstrip("/") + w.replace("/115open/", "/")
-            meta_path = meta_path.rstrip("/")
+            meta_path = config.meta_path_for(w)
             if os.path.exists(meta_path):
                 meta_paths.append(meta_path)
                 total_folders += count_target_folders(meta_path)

@@ -124,6 +124,17 @@ def get_weight_for_tier(tier: str) -> int:
     return m.get(str(tier).upper(), 0)
 
 
+def normalize_config(cfg: dict) -> dict:
+    """对配置做统一的规范化处理（默认值合并 + 字段校验）。
+
+    内存缓存与落盘都应经过这里，避免「文件里的值与内存里的值不一致」。
+    """
+    out = dict(DEFAULT_CONFIG)
+    out.update(cfg or {})
+    out["WEIGHT_ORDER"] = normalize_weight_order(out.get("WEIGHT_ORDER"))
+    return out
+
+
 def load_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
     if os.path.exists(CONFIG_PATH):
@@ -134,9 +145,7 @@ def load_config() -> dict:
                 cfg.update(loaded)
         except Exception as e:  # noqa: BLE001 - 与原脚本一致：任何异常都回退默认值
             print(f"配置文件加载失败: {e}，使用默认安全配置。")
-    # 权重档位顺序始终规范为合法的 4 档
-    cfg["WEIGHT_ORDER"] = normalize_weight_order(cfg.get("WEIGHT_ORDER"))
-    return cfg
+    return normalize_config(cfg)
 
 
 def init_config() -> dict:
@@ -170,7 +179,10 @@ def save_config(new_config_data: dict) -> tuple[bool, dict | str]:
             os.makedirs(CONFIG_DIR, exist_ok=True)
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(current, f, ensure_ascii=False, indent=4)
-            return True, current
+            # 关键：同步更新内存缓存，否则 current_config() 仍读旧值，
+            # 导致「保存成功但必须重启才生效」。
+            _config = normalize_config(current)
+            return True, dict(_config)
         except Exception as e:  # noqa: BLE001
             return False, str(e)
 
@@ -212,3 +224,104 @@ def metadata_base_path() -> str:
 
 def watched_dirs() -> list[str]:
     return list(current_config().get("WATCHED_DIRS", []) or [])
+
+
+# ---------------------------------------------------------------------------
+# 路径映射（网盘根 <-> 元数据根）
+#
+# 历史实现把 "/115open/" 写死在各处做字符串替换，一旦网盘目录不叫 115open
+# 推导就全部失效。这里改为「按监听目录自适应推导」：
+#
+#   网盘侧:  MOUNT_BASE_PATH  + WATCHED_DIR[i]
+#   元数据侧: METADATA_BASE_PATH + <推导出的相对子路径>
+#
+# 推导规则（按优先级）：
+#   1) 若监听目录以 /115open/ 开头（历史约定）-> 去掉这层
+#      /115open/9KG/STRM  ->  /9KG/STRM
+#   2) 若监听目录首层在元数据侧真实存在（如 /9KG 存在）-> 去掉首层
+#      /9KG/STRM  ->  /STRM   （极少见，仅当 /9KG 在元数据根下存在时）
+#   3) 否则原样保留
+#      /9KG/STRM  ->  /9KG/STRM
+#
+# 也可以在配置里直接指定 WATCHED_META_SUBDIRS 覆盖推导结果。
+# ---------------------------------------------------------------------------
+
+# 历史约定的「网盘专用」首层目录名，元数据侧不存在这一层
+LEGACY_MOUNT_ONLY_PREFIXES = ("/115open",)
+
+
+def _norm_slash(p: str) -> str:
+    """规范化路径：统一用 /，去掉重复与尾部斜杠。
+
+    注意：不能无条件补前导 "/"。
+    容器内（Linux）路径天然以 / 开头；但开发/测试在 Windows 上，
+    路径形如 ``E:/workspace/media``，若强行补 "/" 会变成
+    ``/E:/workspace/media``，导致路径彻底失效。
+    """
+    q = str(p or "").strip()
+    if not q:
+        return q
+    q = q.replace("\\", "/")
+    while "//" in q:
+        q = q.replace("//", "/")
+    # Windows 盘符（如 E:/）或 UNC 路径不补前导斜杠
+    is_windows = len(q) >= 2 and q[1] == ":"
+    if not is_windows and not q.startswith("/"):
+        q = "/" + q
+    return q.rstrip("/") or ("/" if not is_windows else q)
+
+
+def _join(base: str, sub: str) -> str:
+    """把相对子路径拼到根目录上（不做任何前导斜杠假设）。"""
+    b = _norm_slash(base)
+    s = _norm_slash(sub)
+    if s in ("", "/"):
+        return b
+    return (b + s).rstrip("/")
+
+
+def meta_subdir_for(watch_dir: str, meta_base: str | None = None) -> str:
+    """由监听目录推导它在「元数据根」下的相对子路径（以 / 开头）。
+
+    推导顺序：
+      1) 用户显式配置的 WATCHED_META_SUBDIRS 覆盖
+      2) 历史约定：/115open/... 去掉这层
+      3) 其余原样保留
+
+    刻意不做「首层同名就去掉」这类启发式猜测：
+    元数据侧往往也存在 9KG 这样的同名目录，猜测会把路径改错，
+    反而导致元数据清理找不到文件。需要特殊映射时用配置显式指定。
+    """
+    w = _norm_slash(watch_dir)
+    if w == "/":
+        return "/"
+
+    # 1) 用户显式覆盖
+    cfg = current_config()
+    overrides = cfg.get("WATCHED_META_SUBDIRS") or {}
+    if isinstance(overrides, dict) and watch_dir in overrides:
+        return _norm_slash(overrides[watch_dir])
+
+    # 2) 历史约定：/115open/... 去掉这层（元数据侧不存在 115open）
+    for prefix in LEGACY_MOUNT_ONLY_PREFIXES:
+        if w == prefix:
+            return "/"
+        if w.startswith(prefix + "/"):
+            return w[len(prefix):]
+
+    # 3) 原样
+    return w
+
+
+def meta_path_for(watch_dir: str) -> str:
+    """监听目录对应的元数据绝对路径。"""
+    mb = _norm_slash(metadata_base_path())
+    sub = meta_subdir_for(watch_dir, mb)
+    return _join(mb, sub)
+
+
+def mount_path_for(watch_dir: str) -> str:
+    """监听目录对应的网盘绝对路径。"""
+    mb = _norm_slash(mount_base_path())
+    w = _norm_slash(watch_dir)
+    return _join(mb, w)

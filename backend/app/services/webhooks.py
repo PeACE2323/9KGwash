@@ -109,9 +109,8 @@ def handle_emby(payload, incoming_headers) -> tuple[str, str]:
             )
 
             folder_still_exists = False
-            meta_base = config.metadata_base_path().rstrip("/")
             for w in config.watched_dirs():
-                meta_path = (meta_base + w.replace("/115open/", "/")).rstrip("/")
+                meta_path = config.meta_path_for(w)
                 if fs.fast_check_folder_exists(meta_path, search_fanhao):
                     folder_still_exists = True
                     break

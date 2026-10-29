@@ -198,40 +198,113 @@ def update_weight_order():
 # ---------------------------------------------------------------------------
 @bp.route("/api/config", methods=["POST"])
 def update_config():
+    """热更新配置。
+
+    支持字段（均可选，未提交的保持原值）：
+        DB_ONLINE_WEBHOOK / STRM_WEBHOOK / DRY_RUN / IGNORE_LEADING_DIGITS
+        MOUNT_BASE_PATH / METADATA_BASE_PATH / WATCHED_DIRS
+    """
     try:
         data = request.get_json(silent=True)
         if not data:
             return jsonify({"success": False, "error": "提交数据无效"}), 400
 
-        new_webhook = str(data.get("DB_ONLINE_WEBHOOK", "") or "").strip()
-        new_strm_webhook = str(data.get("STRM_WEBHOOK", "") or "").strip()
-        new_dry_run = bool(data.get("DRY_RUN", True))
-        new_ignore_digits = bool(data.get("IGNORE_LEADING_DIGITS", False))
+        payload = {
+            "DB_ONLINE_WEBHOOK": str(data.get("DB_ONLINE_WEBHOOK", "") or "").strip(),
+            "STRM_WEBHOOK": str(data.get("STRM_WEBHOOK", "") or "").strip(),
+            "DRY_RUN": bool(data.get("DRY_RUN", True)),
+            "IGNORE_LEADING_DIGITS": bool(data.get("IGNORE_LEADING_DIGITS", False)),
+        }
 
-        success, res = config.save_config(
-            {
-                "DB_ONLINE_WEBHOOK": new_webhook,
-                "STRM_WEBHOOK": new_strm_webhook,
-                "DRY_RUN": new_dry_run,
-                "IGNORE_LEADING_DIGITS": new_ignore_digits,
-            }
-        )
+        # ---- 路径三项（可选，做了规范化与基本校验）----
+        path_changes = {}
+
+        if "MOUNT_BASE_PATH" in data:
+            v = _norm_cfg_path(data.get("MOUNT_BASE_PATH"))
+            if not v:
+                return jsonify({"success": False, "error": "网盘根目录不能为空"}), 400
+            payload["MOUNT_BASE_PATH"] = v
+            path_changes["MOUNT_BASE_PATH"] = v
+
+        if "METADATA_BASE_PATH" in data:
+            v = _norm_cfg_path(data.get("METADATA_BASE_PATH"))
+            if not v:
+                return jsonify({"success": False, "error": "元数据根目录不能为空"}), 400
+            payload["METADATA_BASE_PATH"] = v
+            path_changes["METADATA_BASE_PATH"] = v
+
+        if "WATCHED_DIRS" in data:
+            dirs = _norm_watched_dirs(data.get("WATCHED_DIRS"))
+            if not dirs:
+                return jsonify({"success": False, "error": "监听目录至少保留一项"}), 400
+            payload["WATCHED_DIRS"] = dirs
+            path_changes["WATCHED_DIRS"] = dirs
+
+        success, res = config.save_config(payload)
 
         if success:
-            config.update_runtime(
-                DB_ONLINE_WEBHOOK=new_webhook,
-                STRM_WEBHOOK=new_strm_webhook,
-                DRY_RUN=new_dry_run,
-                IGNORE_LEADING_DIGITS=new_ignore_digits,
-            )
+            runtime_updates = {
+                "DB_ONLINE_WEBHOOK": payload["DB_ONLINE_WEBHOOK"],
+                "STRM_WEBHOOK": payload["STRM_WEBHOOK"],
+                "DRY_RUN": payload["DRY_RUN"],
+                "IGNORE_LEADING_DIGITS": payload["IGNORE_LEADING_DIGITS"],
+            }
+            # 路径变更立即生效：写入运行时，让所有推导函数立刻用新值
+            for k, v in path_changes.items():
+                runtime_updates[k] = v
+            config.update_runtime(**runtime_updates)
+
+            if path_changes:
+                logger.info(f"⚙️ [热更新] 路径配置已更新并生效: {path_changes}")
             logger.info(
-                f"⚙️ [热更新] 网页在线修改配置成功！DRY_RUN={new_dry_run}, "
-                f"忽略前置数字={new_ignore_digits}, STRM触发={new_strm_webhook}"
+                f"⚙️ [热更新] 网页在线修改配置成功！DRY_RUN={payload['DRY_RUN']}, "
+                f"忽略前置数字={payload['IGNORE_LEADING_DIGITS']}, "
+                f"STRM触发={payload['STRM_WEBHOOK']}"
             )
-            return jsonify({"success": True})
+            return jsonify({"success": True, "config": config.current_config()})
         return jsonify({"success": False, "error": str(res)}), 500
     except Exception as e:  # noqa: BLE001
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _norm_cfg_path(raw) -> str:
+    """规范化配置里的单个路径：统一斜杠、去掉尾部斜杠。
+
+    刻意不做 realpath：网盘挂载点（CD2/rclone FUSE）的 realpath 会解析到
+    挂载源，导致保存后的路径与实际不一致。
+
+    也刻意不无条件补前导 "/"：容器内是 Linux 绝对路径，
+    但开发/测试在 Windows 上形如 ``E:/media``，补斜杠会让路径失效。
+    """
+    q = str(raw or "").strip()
+    if not q:
+        return ""
+    q = q.replace("\\", "/")
+    while "//" in q:
+        q = q.replace("//", "/")
+    is_windows = len(q) >= 2 and q[1] == ":"
+    if not is_windows and not q.startswith("/"):
+        q = "/" + q
+    q = q.rstrip("/")
+    return q or ("/" if not is_windows else q)
+
+
+def _norm_watched_dirs(raw) -> list[str]:
+    """规范化监听目录列表：支持数组或逗号/换行分隔字符串，去重保序。"""
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple)) else str(raw).replace("\n", ",").split(",")
+
+    out, seen = [], set()
+    for it in items:
+        v = _norm_cfg_path(it)
+        if not v:
+            continue
+        if v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -276,17 +349,16 @@ def api_delete_empty():
 @bp.route("/api/status")
 def api_status():
     cfg = config.current_config()
-    mount_base = config.mount_base_path().rstrip("/")
-    meta_base = config.metadata_base_path().rstrip("/")
     watched = []
     for w in config.watched_dirs():
-        meta_path = (meta_base + w.replace("/115open/", "/")).rstrip("/")
+        mount_path = config.mount_path_for(w)
+        meta_path = config.meta_path_for(w)
         watched.append(
             {
                 "watch_path": w,
-                "mount_path": mount_base + w,
+                "mount_path": mount_path,
                 "meta_path": meta_path,
-                "mount_ok": os.path.exists(mount_base + w),
+                "mount_ok": os.path.exists(mount_path),
                 "meta_ok": os.path.exists(meta_path),
             }
         )

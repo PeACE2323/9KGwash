@@ -30,6 +30,7 @@
     loaded: { overview: false, hound: false, dedup: false, deliver: false },
     deliver: null, // 当前投递配置
     weightDefault: [], // 权重默认顺序（用于一键恢复）
+    lastStatus: null, // 最近一次 /api/status 结果（路径表单与浏览起点会用到）
   };
 
   /* ----------------------------- 通用 ----------------------------- */
@@ -63,6 +64,15 @@
   async function api(url, options) {
     const res = await fetch(url, options);
     return res.json();
+  }
+
+  /** POST JSON 便捷方法 */
+  async function apiPost(url, payload) {
+    return api(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
   }
 
   function escapeHtml(s) {
@@ -162,7 +172,11 @@
       setTimeout(() => scrollLogToBottom(false), 60);
     }
     if (name === "deliver") loadDeliverConfig();
-    if (name === "config") loadWeights();
+    if (name === "config") {
+      // 路径配置需要 /api/status 的数据来回填，否则表单会是空的
+      loadStatus();
+      loadWeights();
+    }
   }
 
   /* ----------------------------- 主题切换 ----------------------------- */
@@ -1029,6 +1043,114 @@
   /* ----------------------------- 目录选择器 ----------------------------- */
   let browserTargetId = null;
   let browserCurrent = "/";
+  let browserRoots = [];
+
+  /** 路径配置表单：状态 */
+  const pathForm = { loaded: false, dirty: false };
+
+  /** 把 /api/status 的数据回填到路径表单（用户正在编辑时不覆盖） */
+  function fillPathForm(st) {
+    const mountEl = $("cfg-mount");
+    const metaEl = $("cfg-meta");
+    const watchEl = $("cfg-watched");
+    if (!mountEl || !metaEl || !watchEl) return;
+
+    if (!pathForm.loaded || !pathForm.dirty) {
+      mountEl.value = st.mount_base_path || "";
+      metaEl.value = st.metadata_base_path || "";
+      const dirs = (st.watched || []).map((w) => w.watch_path);
+      watchEl.value = dirs.join("\n");
+      pathForm.loaded = true;
+      updatePathHints(st);
+    }
+    state.lastStatus = st;
+  }
+
+  /** 显示路径的实际解析结果，帮助用户确认映射是否正确 */
+  function updatePathHints(st) {
+    const s = st || state.lastStatus;
+    if (!s) return;
+    const watching = s.watched || [];
+    const mountHint = $("cfg-mount-hint");
+    const metaHint = $("cfg-meta-hint");
+    const watchHint = $("cfg-watched-hint");
+
+    if (mountHint) {
+      const ok = (s.watched || []).some((w) => w.mount_ok);
+      mountHint.textContent = watching.length
+        ? ok
+          ? `容器内实际访问：${watching[0].mount_path}`
+          : `⚠️ 容器内找不到：${watching[0].mount_path}`
+        : "";
+      mountHint.className = "field-hint" + (watching.length && !ok ? " bad" : "");
+    }
+    if (metaHint) {
+      const ok = (s.watched || []).some((w) => w.meta_ok);
+      metaHint.textContent = watching.length
+        ? ok
+          ? `容器内实际访问：${watching[0].meta_path}`
+          : `⚠️ 容器内找不到：${watching[0].meta_path}`
+        : "";
+      metaHint.className = "field-hint" + (watching.length && !ok ? " bad" : "");
+    }
+    if (watchHint && watching.length) {
+      watchHint.textContent = `共 ${watching.length} 个监听目录，网盘侧与元数据侧均已自动推导`;
+    }
+  }
+
+  /** 收集路径表单 */
+  function collectPathForm() {
+    return {
+      MOUNT_BASE_PATH: ($("cfg-mount").value || "").trim(),
+      METADATA_BASE_PATH: ($("cfg-meta").value || "").trim(),
+      WATCHED_DIRS: ($("cfg-watched").value || "")
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+  }
+
+  async function savePaths() {
+    const payload = collectPathForm();
+    if (!payload.MOUNT_BASE_PATH || !payload.METADATA_BASE_PATH) {
+      pathMsg("网盘根目录与元数据根目录都不能为空", "bad");
+      return;
+    }
+    if (!payload.WATCHED_DIRS.length) {
+      pathMsg("监听目录至少保留一项", "bad");
+      return;
+    }
+    const btn = $("path-save");
+    btn.disabled = true;
+    try {
+      const data = await apiPost("/api/config", payload);
+      if (data.success) {
+        pathForm.dirty = false;
+        pathMsg("已保存并生效", "ok");
+        toast("路径配置已更新，立即生效");
+        loadStatus();
+      } else {
+        pathMsg(data.error || "保存失败", "bad");
+      }
+    } catch (e) {
+      pathMsg("保存失败：" + e.message, "bad");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function pathMsg(text, kind) {
+    const el = $("path-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "status-msg" + (kind ? " " + kind : "");
+    if (text) {
+      clearTimeout(pathMsg._t);
+      pathMsg._t = setTimeout(() => {
+        el.textContent = "";
+      }, 4000);
+    }
+  }
 
   async function loadBrowser(path) {
     const list = $("browser-list");
@@ -1040,20 +1162,36 @@
         return;
       }
       browserCurrent = data.path;
+      if (data.roots) browserRoots = data.roots;
       $("browser-path").textContent = data.path;
+
+      // 快捷跳转：网盘根 / 元数据根，省去从 / 逐层点进去
+      const quick = $("browser-quick");
+      if (quick) {
+        const cur = (data.path || "").replace(/\/+$/, "");
+        quick.innerHTML = browserRoots
+          .filter((r) => r && r !== "/")
+          .map((r) => {
+            const on = cur === r || cur.startsWith(r.replace(/\/+$/, "") + "/");
+            return `<button type="button" class="browser-quick-btn${on ? " on" : ""}" data-path="${escapeHtml(
+              r
+            )}">${escapeHtml(r)}</button>`;
+          })
+          .join("");
+      }
 
       const parts = [];
       if (data.parent) {
         parts.push('<div class="browser-entry up" data-path="' + escapeHtml(data.parent) + '">⬆️ 上一级</div>');
+      }
+      if (!(data.dirs || []).length) {
+        parts.push('<div class="empty-hint">该目录下没有子文件夹</div>');
       }
       (data.dirs || []).forEach((d) => {
         parts.push(
           '<div class="browser-entry" data-path="' + escapeHtml(d.path) + '">📁 ' + escapeHtml(d.name) + "</div>"
         );
       });
-      if (!data.dirs || !data.dirs.length) {
-        parts.push('<div class="empty-hint">此目录下没有子目录</div>');
-      }
       list.innerHTML = parts.join("");
 
       list.querySelectorAll(".browser-entry[data-path]").forEach((el) => {
@@ -1065,11 +1203,14 @@
   }
 
   function openBrowser(initial) {
-    browserTargetId = $("deliver-scan-dir");
+    if (arguments.length === 0 || initial === undefined) {
+      browserTargetId = $("deliver-scan-dir");
+    }
     $("browser").hidden = false;
-    loadBrowser(initial || "/");
+    // 默认打开网盘根目录，而不是从 / 开始逐层点击
+    const start = initial || (state.lastStatus && state.lastStatus.mount_base_path) || "/";
+    loadBrowser(start);
   }
-
   /* ----------------------------- 概览 ----------------------------- */
   function setStat(id, text, cls) {
     const el = $(id);
@@ -1120,10 +1261,8 @@
           .join("");
       }
 
-      // 配置视图的只读路径
-      $("cfg-mount").textContent = st.mount_base_path || "-";
-      $("cfg-meta").textContent = st.metadata_base_path || "-";
-      $("cfg-watched").textContent = watched.map((w) => w.watch_path).join(", ") || "-";
+      // 配置视图的路径表单：只在用户没改动时回填，避免轮询覆盖正在编辑的内容
+      fillPathForm(st);
 
       // 模式指示
       const pill = $("mode-pill");
@@ -1723,8 +1862,69 @@
       $("browser").hidden = true;
     });
     $("browser-ok").addEventListener("click", () => {
-      if (browserTargetId) browserTargetId.value = browserCurrent;
+      if (browserTargetId) {
+        if (browserTargetId.tagName === "TEXTAREA") {
+          // 监听目录是多行文本框：追加一行
+          const cur = browserTargetId.value.trim();
+          if (!cur.split(/\n/).map((s) => s.trim()).includes(browserCurrent)) {
+            browserTargetId.value = (cur ? cur + "\n" : "") + browserCurrent;
+          }
+        } else {
+          browserTargetId.value = browserCurrent;
+        }
+        browserTargetId.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       $("browser").hidden = true;
+    });
+
+    // 快捷跳转（网盘根 / 元数据根）
+    $("browser-quick").addEventListener("click", (e) => {
+      const btn = e.target.closest(".browser-quick-btn");
+      if (btn) loadBrowser(btn.dataset.path);
+    });
+
+    /* ---------- 路径配置表单 ---------- */
+    ["cfg-mount", "cfg-meta", "cfg-watched"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        pathForm.dirty = true;
+        // 实时预览解析结果
+        const draft = collectPathForm();
+        const mount = (draft.MOUNT_BASE_PATH || "").replace(/\/+$/, "");
+        const meta = (draft.METADATA_BASE_PATH || "").replace(/\/+$/, "");
+        const first = draft.WATCHED_DIRS[0] || "";
+        const mh = $("cfg-mount-hint");
+        const th = $("cfg-meta-hint");
+        if (mh) mh.textContent = first ? `容器内实际访问：${mount}${first}` : "";
+        if (th) {
+          // 与后端一致：/115open 前缀在元数据侧不存在
+          const sub = first.replace(/^\/115open(?=\/)/, "");
+          th.textContent = first ? `容器内实际访问：${meta}${sub}` : "";
+        }
+        pathMsg("");
+      });
+    });
+
+    document.querySelectorAll(".path-browse").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        browserTargetId = $(btn.dataset.target);
+        $("browser").hidden = false;
+        const draft = collectPathForm();
+        const start =
+          (btn.dataset.target === "cfg-meta" ? draft.METADATA_BASE_PATH : draft.MOUNT_BASE_PATH) ||
+          (state.lastStatus && state.lastStatus.mount_base_path) ||
+          "/";
+        loadBrowser(start);
+      });
+    });
+
+    $("path-save").addEventListener("click", savePaths);
+    $("path-reset").addEventListener("click", () => {
+      pathForm.dirty = false;
+      pathForm.loaded = false;
+      pathMsg("已恢复为当前生效值", "ok");
+      loadStatus();
     });
 
     // 委托：点击带 data-copy 的元素即复制

@@ -1818,3 +1818,100 @@ html[data-theme="light"] .log-tab.active .log-tab-count {
   .log-search-info { display: none; }
   .log-search { padding: 5px 8px; }
 }
+
+/* ---------- 路径配置表单 ---------- */
+.path-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.path-form .field > span {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 5px;
+  display: block;
+}
+
+.path-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.path-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 13.5px;
+  font-family: var(--mono);
+  outline: none;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.path-input:focus {
+  border-color: var(--pink);
+  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.13);
+}
+.path-textarea {
+  resize: vertical;
+  min-height: 74px;
+  line-height: 1.65;
+}
+
+.path-input-row .btn { flex: 0 0 auto; }
+
+.field-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-faint);
+  word-break: break-all;
+}
+.field-hint.bad { color: var(--red-text); }
+
+/* ---------- 目录选择器：快捷跳转 ---------- */
+.browser-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+.browser-quick:empty { display: none; }
+
+.browser-quick-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: var(--mono);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.15s ease;
+}
+.browser-quick-btn:hover {
+  color: var(--text);
+  border-color: var(--pink);
+  background: rgba(236, 72, 153, 0.12);
+}
+.browser-quick-btn.on {
+  color: #fff;
+  background: linear-gradient(135deg, var(--pink), #a855f7);
+  border-color: transparent;
+}
+
+@media (max-width: 640px) {
+  .path-input-row { flex-wrap: wrap; }
+  .path-input { flex: 1 1 100%; }
+}

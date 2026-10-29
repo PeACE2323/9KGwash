@@ -69,6 +69,36 @@ def default_deliver_config() -> dict:
 
 VALID_KINDS = ("jav", "western", "other", "fallback")
 
+# ---------------------------------------------------------------------------
+# 告警去重：后台监控会周期性触发，同一问题不应反复刷屏。
+# 只有「问题消失后再次出现」才重新告警。
+# ---------------------------------------------------------------------------
+_warned: set[str] = set()
+_warn_lock = threading.Lock()
+
+
+def _warn_once(key: str, message: str) -> bool:
+    """同一个 key 只输出一次日志。返回是否真的输出了。"""
+    with _warn_lock:
+        if key in _warned:
+            return False
+        _warned.add(key)
+    logger.warning(message)
+    return True
+
+
+def _clear_warn(key: str) -> None:
+    """清除告警记忆（问题恢复时调用）。"""
+    with _warn_lock:
+        _warned.discard(key)
+
+
+def _clear_warn_prefix(prefix: str) -> None:
+    """按前缀批量清除告警记忆。"""
+    with _warn_lock:
+        for k in [x for x in _warned if x.startswith(prefix)]:
+            _warned.discard(k)
+
 
 def _split_keywords(raw) -> list[str]:
     """把关键字字段统一为去重后的字符串列表。
@@ -614,14 +644,26 @@ def run_deliver(raw_cfg: dict, dry_run: bool = False, only_recent: bool = False)
         if not scan_dir:
             stats["success"] = False
             stats["error"] = "未配置监控目录"
-            logger.warning("📦 [投递] 未配置监控目录，任务跳过。")
+            _warn_once("no-scan-dir", "📦 [投递] 未配置监控目录，任务跳过。")
             return stats
 
         if not os.path.isdir(scan_dir):
             stats["success"] = False
             stats["error"] = f"监控目录不存在: {scan_dir}"
-            logger.warning(f"📦 [投递] 监控目录不存在: {scan_dir}")
+            # 后台监控每隔一段时间就会跑一次，目录失效时会疯狂刷屏。
+            # 同一路径只告警一次，目录恢复后自动重置，再次失效时重新告警。
+            _warn_once(
+                f"missing-dir:{scan_dir}",
+                f"📦 [投递] 监控目录不存在: {scan_dir}"
+                f"（已暂停重复提示，目录恢复后自动重试）",
+            )
             return stats
+
+        # 目录恢复正常：清掉所有「目录不存在」的告警记忆，
+        # 避免用户切换过多个监控目录后记忆无限累积；
+        # 下次再有目录失效时会重新告警。
+        _clear_warn_prefix("missing-dir:")
+        _clear_warn("no-scan-dir")
 
         # 注意：不再输出「开始扫描 + 目录路径」这类噪音日志，
         # 日志里只保留逐文件的处理结果与最终汇总，避免活动日志被路径刷屏。

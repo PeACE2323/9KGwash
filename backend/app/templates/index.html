@@ -314,13 +314,54 @@
           </div>
 
           <div class="card">
-            <div class="card-head"><h2>📁 路径配置（只读）</h2></div>
-            <p class="view-tip">以下路径来自 <code>/config/config.json</code>，需修改文件或使用环境变量后重启容器生效。</p>
-            <div class="kv-list">
-              <div class="kv"><span>MOUNT_BASE_PATH</span><div class="kv-val" id="cfg-mount">-</div></div>
-              <div class="kv"><span>METADATA_BASE_PATH</span><div class="kv-val" id="cfg-meta">-</div></div>
-              <div class="kv"><span>WATCHED_DIRS</span><div class="kv-val" id="cfg-watched">-</div></div>
+            <div class="card-head">
+              <h2>📁 路径配置</h2>
+              <div class="head-tools">
+                <span class="status-msg" id="path-msg"></span>
+                <button class="btn btn-ghost btn-sm" id="path-reset">恢复默认</button>
+              </div>
             </div>
+            <p class="view-tip">
+              这里填写<strong>容器内的路径</strong>（不是宿主机 / Unraid 上的路径）。
+              宿主机目录通过 Docker 映射进容器后，容器里看到的位置由映射决定。
+              修改后<strong>立即生效，无需重启容器</strong>。
+            </p>
+
+            <div class="path-form">
+              <label class="field">
+                <span>网盘根目录</span>
+                <div class="path-input-row">
+                  <input type="text" id="cfg-mount" class="path-input"
+                         placeholder="/media/CloudDrive" autocomplete="off">
+                  <button type="button" class="btn btn-ghost btn-sm path-browse" data-target="cfg-mount">浏览</button>
+                </div>
+                <small class="field-hint" id="cfg-mount-hint"></small>
+              </label>
+
+              <label class="field">
+                <span>元数据根目录</span>
+                <div class="path-input-row">
+                  <input type="text" id="cfg-meta" class="path-input"
+                         placeholder="/metadata" autocomplete="off">
+                  <button type="button" class="btn btn-ghost btn-sm path-browse" data-target="cfg-meta">浏览</button>
+                </div>
+                <small class="field-hint" id="cfg-meta-hint"></small>
+              </label>
+
+              <label class="field">
+                <span>监听目录（每行一个，相对网盘根）</span>
+                <div class="path-input-row">
+                  <textarea id="cfg-watched" class="path-input path-textarea" rows="3"
+                            placeholder="/115open/9KG/STRM" spellcheck="false"></textarea>
+                  <button type="button" class="btn btn-ghost btn-sm path-browse" data-target="cfg-watched">浏览</button>
+                </div>
+                <small class="field-hint" id="cfg-watched-hint"></small>
+              </label>
+            </div>
+
+            <button class="btn btn-primary btn-block" id="path-save" style="margin-top:12px">
+              💾 保存路径配置
+            </button>
           </div>
         </section>
 
@@ -381,6 +422,7 @@
   <div id="browser" class="modal" hidden>
     <div class="modal-card browser-card">
       <h3>选择目录</h3>
+      <div class="browser-quick" id="browser-quick"></div>
       <div class="browser-path" id="browser-path">/</div>
       <div class="browser-list" id="browser-list"></div>
       <div class="modal-actions">

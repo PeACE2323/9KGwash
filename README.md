@@ -21,6 +21,41 @@ ghcr.io/peace2323/9kgwash:latest
 
 ---
 
+## 路径配置（网页可改，立即生效）
+
+「⚙️ 运行配置 → 📁 路径配置」里三项都能直接在网页改，**保存后立即生效，无需重启容器**：
+
+| 字段 | 含义 | 示例 |
+| --- | --- | --- |
+| 网盘根目录 | 容器内看到的网盘挂载根 | /media/CloudDrive |
+| 元数据根目录 | 容器内看到的元数据挂载根 | /metadata |
+| 监听目录 | 相对网盘根，每行一个 | /115open/9KG/STRM |
+
+填写的是**容器内路径**，不是宿主机 / Unraid 路径。宿主机目录通过 Docker -v 映射进容器后，
+容器里看到的位置由映射决定。例如：
+
+`
+-v /mnt/user/CloudDrive/:/media/CloudDrive     # 容器内 /media/CloudDrive 就是网盘根
+-v /mnt/user/Media/CloudDrive:/metadata        # 容器内 /metadata 就是元数据根
+`
+
+每个输入框下方会实时显示「容器内实际访问」的完整路径，方便确认映射是否正确；
+路径不存在时会显红字告警。
+
+**监听目录与元数据目录的对应关系**：
+
+- 网盘侧：网盘根目录 + 监听目录
+- 元数据侧：元数据根目录 + 监听目录（自动去掉 /115open 这一层）
+
+| 监听目录 | 网盘侧实际路径 | 元数据侧实际路径 |
+| --- | --- | --- |
+| /115open/9KG/STRM | /media/CloudDrive/115open/9KG/STRM | /metadata/9KG/STRM |
+
+> 不再依赖写死的 115open 目录名。若你的网盘目录不叫 115open，
+> 仍可用 WATCHED_META_SUBDIRS 在 /config/config.json 里显式指定映射关系。
+
+---
+
 ## 0. docker run（推荐）
 
 ```bash

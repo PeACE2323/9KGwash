@@ -20,8 +20,8 @@ def protected_paths() -> list[str]:
     meta_base = config.metadata_base_path().rstrip("/")
     paths = [mount_base, meta_base]
     for w in config.watched_dirs():
-        paths.append((mount_base + w).rstrip("/"))
-        paths.append((meta_base + w.replace("/115open/", "/")).rstrip("/"))
+        paths.append(config.mount_path_for(w))
+        paths.append(config.meta_path_for(w))
     return paths
 
 
@@ -97,7 +97,7 @@ def meta_to_mount_dir(meta_dir: str):
         return None
     rel = os.path.relpath(meta_dir, meta_base)
     for w in config.watched_dirs():
-        w_meta_sub = w.replace("/115open/", "/").strip("/")
+        w_meta_sub = config.meta_subdir_for(w, meta_base).strip("/")
         if rel == w_meta_sub or rel.startswith(w_meta_sub + os.sep) or rel.startswith(w_meta_sub + "/"):
             w_mount_sub = w.strip("/")
             mount_rel = rel.replace(w_meta_sub, w_mount_sub, 1)
@@ -119,8 +119,30 @@ def meta_to_mount_dir(meta_dir: str):
 
 
 def meta_dir_of(dir_path: str) -> str:
-    """本地媒体目录 -> 对应元数据目录（原脚本的 replace 推导方式）。"""
-    return dir_path.replace(config.mount_base_path(), config.metadata_base_path()).replace("/115open/", "/")
+    """本地媒体目录 -> 对应元数据目录。
+
+    不再依赖写死的 "/115open/"，改为按监听目录的相对关系推导：
+    先找该媒体目录属于哪个监听目录的网盘侧，再换算到元数据侧。
+
+    注意：比较前必须把分隔符统一（Windows 上 dir_path 可能是反斜杠，
+    而配置里的根路径已被规范成正斜杠），否则前缀匹配失败会走错分支。
+    """
+    p = str(dir_path or "").replace("\\", "/")
+
+    for w in config.watched_dirs():
+        w_mount_root = config.mount_path_for(w).replace("\\", "/").rstrip("/")
+        if not w_mount_root:
+            continue
+        if p == w_mount_root or p.startswith(w_mount_root + "/"):
+            tail = p[len(w_mount_root):]
+            return config.meta_path_for(w).replace("\\", "/").rstrip("/") + tail
+
+    # 兜底：直接按根目录替换
+    mount_base = config.mount_base_path().replace("\\", "/").rstrip("/")
+    meta_base = config.metadata_base_path().replace("\\", "/").rstrip("/")
+    if mount_base and p.startswith(mount_base):
+        return meta_base + p[len(mount_base):]
+    return p.replace(mount_base, meta_base)
 
 
 def clean_exact_metadata(loser_basename: str, folder_path: str, only_delete_json: bool = False) -> set:
