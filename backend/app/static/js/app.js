@@ -1045,21 +1045,18 @@
   let browserCurrent = "/";
   let browserRoots = [];
 
-  /** 路径配置表单：状态 */
+  /** 路径配置表单：只包含「存储路径」两项（网盘根 / 元数据根） */
   const pathForm = { loaded: false, dirty: false };
 
   /** 把 /api/status 的数据回填到路径表单（用户正在编辑时不覆盖） */
   function fillPathForm(st) {
     const mountEl = $("cfg-mount");
     const metaEl = $("cfg-meta");
-    const watchEl = $("cfg-watched");
-    if (!mountEl || !metaEl || !watchEl) return;
+    if (!mountEl || !metaEl) return;
 
     if (!pathForm.loaded || !pathForm.dirty) {
       mountEl.value = st.mount_base_path || "";
       metaEl.value = st.metadata_base_path || "";
-      const dirs = (st.watched || []).map((w) => w.watch_path);
-      watchEl.value = dirs.join("\n");
       pathForm.loaded = true;
       updatePathHints(st);
     }
@@ -1073,40 +1070,93 @@
     const watching = s.watched || [];
     const mountHint = $("cfg-mount-hint");
     const metaHint = $("cfg-meta-hint");
-    const watchHint = $("cfg-watched-hint");
+
+    const mountOk = !!s.mount_base_path && watching.some((w) => w.mount_ok);
+    const metaOk = !!s.metadata_base_path && watching.some((w) => w.meta_ok);
+    const hasWatch = watching.length > 0;
 
     if (mountHint) {
-      const ok = (s.watched || []).some((w) => w.mount_ok);
-      mountHint.textContent = watching.length
-        ? ok
-          ? `容器内实际访问：${watching[0].mount_path}`
-          : `⚠️ 容器内找不到：${watching[0].mount_path}`
-        : "";
-      mountHint.className = "field-hint" + (watching.length && !ok ? " bad" : "");
+      if (!s.mount_base_path) {
+        mountHint.textContent = "";
+      } else if (!hasWatch) {
+        mountHint.textContent = "尚未配置监控目录，无法校验";
+      } else if (mountOk) {
+        mountHint.textContent = `✅ 容器内可访问，示例：${watching[0].mount_path}`;
+      } else {
+        mountHint.textContent = `⚠️ 容器内找不到该目录，请检查 Docker 映射：${s.mount_base_path}`;
+      }
+      mountHint.className = "field-hint" + (hasWatch && !mountOk ? " bad" : "");
     }
+
     if (metaHint) {
-      const ok = (s.watched || []).some((w) => w.meta_ok);
-      metaHint.textContent = watching.length
-        ? ok
-          ? `容器内实际访问：${watching[0].meta_path}`
-          : `⚠️ 容器内找不到：${watching[0].meta_path}`
-        : "";
-      metaHint.className = "field-hint" + (watching.length && !ok ? " bad" : "");
+      if (!s.metadata_base_path) {
+        metaHint.textContent = "";
+      } else if (!hasWatch) {
+        metaHint.textContent = "尚未配置监控目录，无法校验";
+      } else if (metaOk) {
+        metaHint.textContent = `✅ 容器内可访问，示例：${watching[0].meta_path}`;
+      } else {
+        metaHint.textContent = `⚠️ 容器内找不到该目录，请检查 Docker 映射：${s.metadata_base_path}`;
+      }
+      metaHint.className = "field-hint" + (hasWatch && !metaOk ? " bad" : "");
     }
-    if (watchHint && watching.length) {
-      watchHint.textContent = `共 ${watching.length} 个监听目录，网盘侧与元数据侧均已自动推导`;
-    }
+
+    // 投递页的监控目录提示
+    updateScanDirHint();
   }
 
-  /** 收集路径表单 */
+  /** 投递页：校验监控目录是否存在，并给出可读提示 */
+  function updateScanDirHint() {
+    const hint = $("deliver-scan-dir-hint");
+    const input = $("deliver-scan-dir");
+    if (!hint || !input) return;
+    const v = (input.value || "").trim();
+    if (!v) {
+      hint.textContent = "";
+      hint.className = "field-hint";
+      return;
+    }
+    // 前端只能做基本判断，真实存在性靠后端 /api/path_check
+    checkScanDir(v);
+  }
+
+  let scanDirTimer = null;
+  function checkScanDir(path) {
+    const hint = $("deliver-scan-dir-hint");
+    clearTimeout(scanDirTimer);
+    scanDirTimer = setTimeout(async () => {
+      try {
+        const data = await apiPost("/api/path_check", {
+          MOUNT_BASE_PATH: (state.lastStatus && state.lastStatus.mount_base_path) || undefined,
+          METADATA_BASE_PATH: (state.lastStatus && state.lastStatus.metadata_base_path) || undefined,
+          WATCHED_DIRS: [path],
+        });
+        if (!hint) return;
+        const r = (data.resolved || [])[0];
+        if (r && r.mount_ok) {
+          hint.textContent = `✅ 容器内可访问：${r.mount_path}`;
+          hint.className = "field-hint";
+        } else if (r) {
+          hint.textContent = `⚠️ 容器内找不到该目录：${r.mount_path}`;
+          hint.className = "field-hint bad";
+        } else if (data.errors && data.errors.length) {
+          hint.textContent = "⚠️ " + data.errors[0];
+          hint.className = "field-hint bad";
+        } else {
+          hint.textContent = "";
+          hint.className = "field-hint";
+        }
+      } catch (e) {
+        /* 静默 */
+      }
+    }, 350);
+  }
+
+  /** 收集路径表单（只有两项） */
   function collectPathForm() {
     return {
       MOUNT_BASE_PATH: ($("cfg-mount").value || "").trim(),
       METADATA_BASE_PATH: ($("cfg-meta").value || "").trim(),
-      WATCHED_DIRS: ($("cfg-watched").value || "")
-        .split(/[\n,]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
     };
   }
 
@@ -1116,9 +1166,15 @@
       pathMsg("网盘根目录与元数据根目录都不能为空", "bad");
       return;
     }
-    if (!payload.WATCHED_DIRS.length) {
-      pathMsg("监听目录至少保留一项", "bad");
-      return;
+    // 先做一次后端校验，路径明显有问题时不让保存
+    try {
+      const chk = await apiPost("/api/path_check", payload);
+      if (chk.errors && chk.errors.length) {
+        pathMsg(chk.errors[0], "bad");
+        return;
+      }
+    } catch (e) {
+      /* 校验失败不阻塞保存 */
     }
     const btn = $("path-save");
     btn.disabled = true;
@@ -1127,7 +1183,7 @@
       if (data.success) {
         pathForm.dirty = false;
         pathMsg("已保存并生效", "ok");
-        toast("路径配置已更新，立即生效");
+        toast("存储路径已更新，立即生效");
         loadStatus();
       } else {
         pathMsg(data.error || "保存失败", "bad");
@@ -1883,28 +1939,22 @@
       if (btn) loadBrowser(btn.dataset.path);
     });
 
-    /* ---------- 路径配置表单 ---------- */
-    ["cfg-mount", "cfg-meta", "cfg-watched"].forEach((id) => {
+    /* ---------- 存储路径表单（只有网盘根 / 元数据根） ---------- */
+    ["cfg-mount", "cfg-meta"].forEach((id) => {
       const el = $(id);
       if (!el) return;
       el.addEventListener("input", () => {
         pathForm.dirty = true;
-        // 实时预览解析结果
-        const draft = collectPathForm();
-        const mount = (draft.MOUNT_BASE_PATH || "").replace(/\/+$/, "");
-        const meta = (draft.METADATA_BASE_PATH || "").replace(/\/+$/, "");
-        const first = draft.WATCHED_DIRS[0] || "";
-        const mh = $("cfg-mount-hint");
-        const th = $("cfg-meta-hint");
-        if (mh) mh.textContent = first ? `容器内实际访问：${mount}${first}` : "";
-        if (th) {
-          // 与后端一致：/115open 前缀在元数据侧不存在
-          const sub = first.replace(/^\/115open(?=\/)/, "");
-          th.textContent = first ? `容器内实际访问：${meta}${sub}` : "";
-        }
         pathMsg("");
       });
     });
+
+    /* ---------- 投递页：监控目录实时校验 ---------- */
+    const scanDirEl = $("deliver-scan-dir");
+    if (scanDirEl) {
+      scanDirEl.addEventListener("input", updateScanDirHint);
+      scanDirEl.addEventListener("blur", updateScanDirHint);
+    }
 
     document.querySelectorAll(".path-browse").forEach((btn) => {
       btn.addEventListener("click", () => {

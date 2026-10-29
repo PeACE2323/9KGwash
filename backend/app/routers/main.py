@@ -234,7 +234,9 @@ def update_config():
             path_changes["METADATA_BASE_PATH"] = v
 
         if "WATCHED_DIRS" in data:
-            dirs = _norm_watched_dirs(data.get("WATCHED_DIRS"))
+            # 若本次同时改了网盘根，用新网盘根解析；否则用当前生效值
+            mb = payload.get("MOUNT_BASE_PATH") or config.mount_base_path()
+            dirs = _norm_watched_dirs(data.get("WATCHED_DIRS"), mb)
             if not dirs:
                 return jsonify({"success": False, "error": "监听目录至少保留一项"}), 400
             payload["WATCHED_DIRS"] = dirs
@@ -289,8 +291,13 @@ def _norm_cfg_path(raw) -> str:
     return q or ("/" if not is_windows else q)
 
 
-def _norm_watched_dirs(raw) -> list[str]:
-    """规范化监听目录列表：支持数组或逗号/换行分隔字符串，去重保序。"""
+def _norm_watched_dirs(raw, mount_base: str | None = None) -> list[str]:
+    """规范化监听目录列表：支持数组或逗号/换行分隔字符串，去重保序。
+
+    允许用户填「完整路径」（含网盘根），会自动剥成相对路径；
+    也兼容历史的相对路径写法。这样就不会出现
+    网盘根被拼接两遍的畸形路径。
+    """
     if raw is None:
         return []
     items = raw if isinstance(raw, (list, tuple)) else str(raw).replace("\n", ",").split(",")
@@ -300,11 +307,107 @@ def _norm_watched_dirs(raw) -> list[str]:
         v = _norm_cfg_path(it)
         if not v:
             continue
-        if v in seen:
+        rel, _err = config.resolve_watch_dir(v, mount_base)
+        if not rel:
             continue
-        seen.add(v)
-        out.append(v)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        out.append(rel)
     return out
+
+
+# ---------------------------------------------------------------------------
+# 路径校验（供界面实时提示，不落盘）
+# ---------------------------------------------------------------------------
+@bp.route("/api/path_check", methods=["POST"])
+def path_check():
+    """校验一组路径配置是否合理，返回解析结果与人类可读的提示。
+
+    请求体（任意子集）：
+        MOUNT_BASE_PATH / METADATA_BASE_PATH / WATCHED_DIRS
+
+    返回：
+        success  bool
+        resolved 每个监听目录解析后的网盘侧/元数据侧路径与存在性
+        errors   阻塞性错误（会导致保存失败）
+        warnings 非阻塞提醒
+    """
+    data = request.get_json(silent=True) or {}
+
+    # 显式传了空值 -> 视为错误；完全没传 -> 用当前生效值
+    if "MOUNT_BASE_PATH" in data:
+        mount = _norm_cfg_path(data.get("MOUNT_BASE_PATH"))
+    else:
+        mount = _norm_cfg_path(config.mount_base_path())
+    if "METADATA_BASE_PATH" in data:
+        meta = _norm_cfg_path(data.get("METADATA_BASE_PATH"))
+    else:
+        meta = _norm_cfg_path(config.metadata_base_path())
+
+    raw_dirs = data.get("WATCHED_DIRS")
+    if raw_dirs is None:
+        raw_dirs = config.watched_dirs()
+    if isinstance(raw_dirs, str):
+        raw_dirs = [x for x in raw_dirs.replace("\n", ",").split(",")]
+    if not isinstance(raw_dirs, (list, tuple)):
+        raw_dirs = []
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    resolved = []
+
+    if not mount:
+        errors.append("网盘根目录不能为空")
+    if not meta:
+        errors.append("元数据根目录不能为空")
+
+    mount_norm = mount.rstrip("/")
+    for raw in raw_dirs:
+        v = _norm_cfg_path(raw)
+        if not v:
+            continue
+        rel, err = config.resolve_watch_dir(v, mount_norm)
+        if err:
+            errors.append(f"监听目录 {v}：{err}")
+            continue
+
+        mount_path = config._join(mount_norm, rel)
+        meta_path = config._join(meta, config.meta_subdir_for(rel, meta))
+
+        resolved.append(
+            {
+                "input": v,
+                "watch_dir": rel,
+                "mount_path": mount_path,
+                "meta_path": meta_path,
+                "mount_ok": os.path.isdir(mount_path),
+                "meta_ok": os.path.isdir(meta_path),
+            }
+        )
+        if not os.path.isdir(mount_path):
+            warnings.append(f"容器内找不到网盘目录：{mount_path}")
+        if not os.path.isdir(meta_path):
+            warnings.append(f"容器内找不到元数据目录：{meta_path}")
+
+    if not resolved and not errors:
+        errors.append("监听目录至少保留一项")
+
+    if not os.path.isdir(mount_norm) and mount_norm:
+        warnings.append(f"网盘根目录在容器内不存在：{mount_norm}")
+    if meta and not os.path.isdir(meta):
+        warnings.append(f"元数据根目录在容器内不存在：{meta}")
+
+    return jsonify(
+        {
+            "success": not errors,
+            "resolved": resolved,
+            "errors": errors,
+            "warnings": warnings,
+            "mount_base_path": mount_norm,
+            "metadata_base_path": meta,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

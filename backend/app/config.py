@@ -128,10 +128,35 @@ def normalize_config(cfg: dict) -> dict:
     """对配置做统一的规范化处理（默认值合并 + 字段校验）。
 
     内存缓存与落盘都应经过这里，避免「文件里的值与内存里的值不一致」。
+
+    监听目录统一存成「相对网盘根」的形式：
+    无论用户填 `/9KG/STRM` 还是 `/media/115open/9KG/STRM`，
+    都会归一成 `/9KG/STRM`，避免网盘根被重复拼接。
     """
     out = dict(DEFAULT_CONFIG)
     out.update(cfg or {})
     out["WEIGHT_ORDER"] = normalize_weight_order(out.get("WEIGHT_ORDER"))
+
+    mount = _norm_slash(out.get("MOUNT_BASE_PATH") or "")
+    raw_dirs = out.get("WATCHED_DIRS") or []
+    if isinstance(raw_dirs, str):
+        raw_dirs = [x for x in raw_dirs.replace("\n", ",").split(",")]
+
+    normed: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_dirs:
+        v = _norm_slash(raw)
+        if not v:
+            continue
+        rel, err = resolve_watch_dir(v, mount)
+        if err or not rel:
+            continue
+        if rel in seen:
+            continue
+        seen.add(rel)
+        normed.append(rel)
+    out["WATCHED_DIRS"] = normed
+
     return out
 
 
@@ -175,13 +200,16 @@ def save_config(new_config_data: dict) -> tuple[bool, dict | str]:
     with _lock:
         current = load_config()
         current.update(new_config_data)
+        # 先归一（监听目录转相对路径、权重档位校验等），
+        # 保证「内存里的值」与「文件里的值」完全一致。
+        normalized = normalize_config(current)
         try:
             os.makedirs(CONFIG_DIR, exist_ok=True)
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(current, f, ensure_ascii=False, indent=4)
-            # 关键：同步更新内存缓存，否则 current_config() 仍读旧值，
+                json.dump(normalized, f, ensure_ascii=False, indent=4)
+            # 同步更新内存缓存，否则 current_config() 仍读旧值，
             # 导致「保存成功但必须重启才生效」。
-            _config = normalize_config(current)
+            _config = normalized
             return True, dict(_config)
         except Exception as e:  # noqa: BLE001
             return False, str(e)
@@ -280,27 +308,78 @@ def _join(base: str, sub: str) -> str:
     return (b + s).rstrip("/")
 
 
+def resolve_watch_dir(raw: str, mount_base: str | None = None) -> tuple[str, str | None]:
+    """把监听目录输入解析为 (相对路径, 提示信息)。
+
+    支持两种填法，避免用户混淆：
+
+      A) 相对路径（历史写法）
+         /115open/9KG/STRM
+         → 原样作为相对路径
+
+      B) 完整路径（易读、不易填错）
+         /media/115open/9KG/STRM 且 网盘根 = /media
+         → 自动剥离网盘根，得到 /115open/9KG/STRM
+
+    关键防错：如果用户填的完整路径里已经包含网盘根，
+    绝不再拼接一次，否则会出现
+        /media/115open + /media/115open/9KG/STRM
+        = /media/115open/media/115open/9KG/STRM
+    这种重复两遍的畸形路径。
+    """
+    w = _norm_slash(raw)
+    if not w or w == "/":
+        return "", "监听目录不能为空"
+
+    mb = _norm_slash(mount_base if mount_base is not None else mount_base_path())
+    mb = mb.rstrip("/")
+
+    # B) 完整路径：以网盘根开头 -> 剥离出相对部分
+    if mb and mb != "/" and (w == mb or w.startswith(mb + "/")):
+        rel = w[len(mb):]
+        if not rel or rel == "/":
+            return "", "监听目录不能等于网盘根目录本身"
+        return rel, None
+
+    # A) 相对路径：原样
+    return w, None
+
+
+def watch_dir_display(raw: str, mount_base: str | None = None) -> str:
+    """返回监听目录的「完整路径」，用于界面展示（避免用户困惑相对/绝对）。"""
+    rel, err = resolve_watch_dir(raw, mount_base)
+    if err or not rel:
+        return _norm_slash(raw)
+    return _join(mount_base if mount_base is not None else mount_base_path(), rel)
+
+
 def meta_subdir_for(watch_dir: str, meta_base: str | None = None) -> str:
     """由监听目录推导它在「元数据根」下的相对子路径（以 / 开头）。
 
     推导顺序：
       1) 用户显式配置的 WATCHED_META_SUBDIRS 覆盖
-      2) 历史约定：/115open/... 去掉这层
-      3) 其余原样保留
+      2) 先归一掉网盘根（若填的是完整路径）
+      3) 历史约定：/115open/... 去掉这层
+      4) 其余原样保留
 
     刻意不做「首层同名就去掉」这类启发式猜测：
     元数据侧往往也存在 9KG 这样的同名目录，猜测会把路径改错，
     反而导致元数据清理找不到文件。需要特殊映射时用配置显式指定。
     """
-    w = _norm_slash(watch_dir)
+    # 先归一：若填的是完整路径，剥离网盘根后再推导
+    w, _err = resolve_watch_dir(watch_dir)
+    if not w:
+        w = _norm_slash(watch_dir)
     if w == "/":
         return "/"
 
-    # 1) 用户显式覆盖
+    # 1) 用户显式覆盖（同时兼容原始写法与归一后的写法）
     cfg = current_config()
     overrides = cfg.get("WATCHED_META_SUBDIRS") or {}
-    if isinstance(overrides, dict) and watch_dir in overrides:
-        return _norm_slash(overrides[watch_dir])
+    if isinstance(overrides, dict):
+        for key in (watch_dir, w):
+            if key in overrides:
+                return _norm_slash(overrides[key])
 
     # 2) 历史约定：/115open/... 去掉这层（元数据侧不存在 115open）
     for prefix in LEGACY_MOUNT_ONLY_PREFIXES:
@@ -321,7 +400,13 @@ def meta_path_for(watch_dir: str) -> str:
 
 
 def mount_path_for(watch_dir: str) -> str:
-    """监听目录对应的网盘绝对路径。"""
+    """监听目录对应的网盘绝对路径。
+
+    自动兼容「相对路径」与「已含网盘根的完整路径」两种写法，
+    不会把网盘根重复拼接两遍。
+    """
     mb = _norm_slash(mount_base_path())
-    w = _norm_slash(watch_dir)
-    return _join(mb, w)
+    rel, err = resolve_watch_dir(watch_dir, mb)
+    if err or not rel:
+        return _norm_slash(watch_dir)
+    return _join(mb, rel)
