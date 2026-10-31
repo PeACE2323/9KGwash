@@ -488,8 +488,23 @@ input[type="text"]:focus, select:focus {
   border-color: var(--pink);
   box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.15);
 }
-select { font-family: inherit; cursor: pointer; }
-select option { background: var(--bg-inset); }
+select {
+  font-family: inherit;
+  cursor: pointer;
+  /* 原生下拉箭头会盖住过长的选项文字，右侧留足空间并自绘箭头 */
+  padding-right: 32px;
+  text-overflow: ellipsis;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--bg-inset);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 17px) calc(50% + 1px), calc(100% - 12px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+select option { background: var(--surface); color: var(--text); }
 
 /* 只读 KV 列表 */
 .kv-list { display: flex; flex-direction: column; gap: 10px; }
@@ -2031,4 +2046,100 @@ html[data-theme="light"] .w-badge-custom {
 @media (max-width: 640px) {
   .scan-path-row .path-input-row { flex-wrap: wrap; }
   .scan-path-row .path-textarea { flex: 1 1 100%; }
+}
+
+/* ---------- 扫描路径列表（一行一个目录） ---------- */
+.scan-path-panel {
+  margin: 10px 0 12px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px dashed var(--border-strong);
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.scan-path-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.scan-path-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.scan-path-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scan-path-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.scan-path-item:focus-within {
+  border-color: var(--pink);
+  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.12);
+}
+
+.scan-path-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--mono);
+  padding: 2px 0;
+}
+.scan-path-input::placeholder { color: var(--text-faint); }
+
+.scan-path-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+.scan-path-btn:hover {
+  border-color: var(--pink);
+  background: rgba(236, 72, 153, 0.12);
+  transform: scale(1.06);
+}
+.scan-path-btn.danger:hover {
+  border-color: rgba(248, 113, 113, 0.6);
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.scan-path-empty {
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  color: var(--text-faint);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+html[data-theme="light"] .scan-path-item {
+  background: #ffffff;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
 }

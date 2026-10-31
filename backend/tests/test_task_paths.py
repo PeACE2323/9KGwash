@@ -141,7 +141,7 @@ HTML = open(os.path.join(BASE, "app", "templates", "index.html"), encoding="utf-
 JS = open(os.path.join(BASE, "app", "static", "js", "app.js"), encoding="utf-8").read()
 CSS = open(os.path.join(BASE, "app", "static", "css", "app.css"), encoding="utf-8").read()
 
-check("导航含洗版配置", 'data-view="washcfg"' in HTML)
+check("导航含洗版权重", 'data-view="washcfg"' in HTML)
 check("有 washcfg 视图", 'id="view-washcfg"' in HTML)
 check("洗版权重卡片在该视图内", "洗板权重顺序" in HTML)
 check("存储路径卡片在该视图内", "💾 存储路径" in HTML)
@@ -152,12 +152,13 @@ i_cfg = HTML.find('id="view-config"')
 i_next = HTML.find("</section>", i_cfg)
 cfg_block = HTML[i_cfg:i_next]
 check("运行配置页不再有权重卡片", "洗板权重顺序" not in cfg_block)
-check("运行配置页不再有存储路径卡片", "存储路径" not in cfg_block)
+check("运行配置页包含存储路径卡片", "存储路径" in cfg_block)
 
-check("猎犬页有路径输入", 'id="hound-paths"' in HTML)
-check("查重页有路径输入", 'id="dedup-paths"' in HTML)
-check("有保存按钮", 'class="btn btn-ghost btn-sm scan-path-save"' in HTML)
+check("猎犬页有路径列表", 'id="hound-path-list"' in HTML)
+check("查重页有路径列表", 'id="dedup-path-list"' in HTML)
+check("有添加按钮", 'scan-path-add' in HTML)
 check("JS 有 loadScanPaths", "function loadScanPaths" in JS)
+check("JS 有 addScanPathRow", "function addScanPathRow" in JS)
 check("JS 有 saveScanPaths", "function saveScanPaths" in JS)
 check("视图切换会加载扫描路径", 'name === "hound" || name === "dedup"' in JS)
 

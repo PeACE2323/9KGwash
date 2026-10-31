@@ -50,7 +50,7 @@
           <span class="nav-dot" id="nav-deliver-dot" title="监控已启用" style="display:none"></span>
         </button>
         <button class="nav-item" data-view="washcfg">
-          <span class="nav-icon">⚖️</span><span class="nav-label">洗版权重与路径</span>
+          <span class="nav-icon">⚖️</span><span class="nav-label">洗版权重</span>
         </button>
 
         <span class="nav-group">系统</span>
@@ -144,20 +144,13 @@
             </div>
             <p class="view-tip">排查本地「没有 STRM」的残留空壳目录，可一键清除。扫描进度会实时输出到活动日志。</p>
 
-            <div class="scan-path-row">
-              <label class="field">
-                <span>扫描路径（每行一个，留空则使用默认元数据目录）</span>
-                <div class="path-input-row">
-                  <textarea id="hound-paths" class="path-input path-textarea" rows="2"
-                            placeholder="留空使用默认：元数据根 + 监听目录，如 /metadata/9KG/STRM"
-                            spellcheck="false"></textarea>
-                  <button type="button" class="btn btn-ghost btn-sm scan-path-browse"
-                          data-target="hound-paths">浏览</button>
-                  <button type="button" class="btn btn-ghost btn-sm scan-path-save"
-                          data-kind="hound">保存</button>
-                </div>
-                <small class="field-hint" id="hound-paths-hint"></small>
-              </label>
+            <div class="scan-path-panel">
+              <div class="scan-path-head">
+                <span class="scan-path-title">扫描路径</span>
+                <button type="button" class="btn btn-ghost btn-xs scan-path-add" data-kind="hound">➕ 添加</button>
+              </div>
+              <div class="scan-path-list" id="hound-path-list"></div>
+              <small class="field-hint" id="hound-paths-hint"></small>
             </div>
 
             <div class="result-box" id="hound-results">
@@ -182,20 +175,13 @@
             </div>
             <p class="view-tip">支持标准纯番号严格比对，以及前置数字双向归一化互查。👑 为保留的王者版本。</p>
 
-            <div class="scan-path-row">
-              <label class="field">
-                <span>扫描路径（每行一个，留空则使用默认元数据目录）</span>
-                <div class="path-input-row">
-                  <textarea id="dedup-paths" class="path-input path-textarea" rows="2"
-                            placeholder="留空使用默认：元数据根 + 监听目录，如 /metadata/9KG/STRM"
-                            spellcheck="false"></textarea>
-                  <button type="button" class="btn btn-ghost btn-sm scan-path-browse"
-                          data-target="dedup-paths">浏览</button>
-                  <button type="button" class="btn btn-ghost btn-sm scan-path-save"
-                          data-kind="dedup">保存</button>
-                </div>
-                <small class="field-hint" id="dedup-paths-hint"></small>
-              </label>
+            <div class="scan-path-panel">
+              <div class="scan-path-head">
+                <span class="scan-path-title">扫描路径</span>
+                <button type="button" class="btn btn-ghost btn-xs scan-path-add" data-kind="dedup">➕ 添加</button>
+              </div>
+              <div class="scan-path-list" id="dedup-path-list"></div>
+              <small class="field-hint" id="dedup-paths-hint"></small>
             </div>
 
             <div class="result-box" id="dedup-results">
@@ -326,6 +312,44 @@
           </div>
 
           <div class="card">
+          </div>
+        </section>
+
+        <!-- ---------- 视图：运行配置 ---------- -->
+        <section class="view" id="view-config">
+          <div class="card">
+            <div class="card-head">
+              <h2>⚙️ 运行时动态配置</h2>
+              <span id="status-msg" class="status-msg"></span>
+            </div>
+            <form id="config-form" class="form" autocomplete="off">
+              <label class="field">
+                <span>DB 目标 Webhook 地址 (POST)</span>
+                <input type="text" id="db_webhook" value="{{ db_webhook }}" placeholder="http://192.168.x.x:port/webhook">
+              </label>
+              <label class="field">
+                <span>STRM 软件唤醒 Webhook (GET)</span>
+                <input type="text" id="strm_webhook" value="{{ strm_webhook }}" placeholder="http://192.168.x.x:port/api/trigger">
+              </label>
+              <label class="field">
+                <span>运行模式 (洗板开关)</span>
+                <select id="dry_run">
+                  <option value="true" {% if dry_run %}selected{% endif %}>🟡 DRY RUN (仅日志模拟，不真删文件)</option>
+                  <option value="false" {% if not dry_run %}selected{% endif %}>🔴 实弹武装 (删除文件与元数据)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>去除番号前置数字 (双向匹配通吃)</span>
+                <select id="ignore_digits">
+                  <option value="false" {% if not ignore_digits %}selected{% endif %}>❌ 关闭 (精准匹配原名)</option>
+                  <option value="true" {% if ignore_digits %}selected{% endif %}>✅ 开启 (前置数字与标准番号双向互洗，且转发去除前缀)</option>
+                </select>
+              </label>
+              <button type="submit" class="btn btn-primary btn-block">💾 保存修改 (实时生效)</button>
+            </form>
+          </div>
+
+          <div class="card">
             <div class="card-head">
               <h2>💾 存储路径</h2>
               <div class="head-tools">
@@ -376,41 +400,6 @@
             <button class="btn btn-primary btn-block" id="path-save" style="margin-top:12px">
               💾 保存存储路径
             </button>
-          </div>
-        </section>
-
-        <!-- ---------- 视图：运行配置 ---------- -->
-        <section class="view" id="view-config">
-          <div class="card">
-            <div class="card-head">
-              <h2>⚙️ 运行时动态配置</h2>
-              <span id="status-msg" class="status-msg"></span>
-            </div>
-            <form id="config-form" class="form" autocomplete="off">
-              <label class="field">
-                <span>DB 目标 Webhook 地址 (POST)</span>
-                <input type="text" id="db_webhook" value="{{ db_webhook }}" placeholder="http://192.168.x.x:port/webhook">
-              </label>
-              <label class="field">
-                <span>STRM 软件唤醒 Webhook (GET)</span>
-                <input type="text" id="strm_webhook" value="{{ strm_webhook }}" placeholder="http://192.168.x.x:port/api/trigger">
-              </label>
-              <label class="field">
-                <span>运行模式 (洗板开关)</span>
-                <select id="dry_run">
-                  <option value="true" {% if dry_run %}selected{% endif %}>🟡 DRY RUN (仅日志模拟，不真删文件)</option>
-                  <option value="false" {% if not dry_run %}selected{% endif %}>🔴 实弹武装 (删除文件与元数据)</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>去除番号前置数字 (双向匹配通吃)</span>
-                <select id="ignore_digits">
-                  <option value="false" {% if not ignore_digits %}selected{% endif %}>❌ 关闭 (精准匹配原名)</option>
-                  <option value="true" {% if ignore_digits %}selected{% endif %}>✅ 开启 (前置数字与标准番号双向互洗，且转发去除前缀)</option>
-                </select>
-              </label>
-              <button type="submit" class="btn btn-primary btn-block">💾 保存修改 (实时生效)</button>
-            </form>
           </div>
 
         </section>

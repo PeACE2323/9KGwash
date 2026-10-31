@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import threading
+import time
 
 # --- 固定路径（与容器卷一一对应） ---
 CONFIG_DIR = os.environ.get("XIBAN_CONFIG_DIR", "/config")
@@ -287,15 +289,32 @@ def normalize_config(cfg: dict) -> dict:
 
 
 def load_config() -> dict:
+    """读取配置文件。
+
+    解析失败时不会「静默丢配置」：
+    把损坏的文件备份成 config.json.broken-<时间戳>，再回退默认值，
+    便于事后恢复，也避免下一次保存把原内容彻底覆盖掉。
+    """
     cfg = dict(DEFAULT_CONFIG)
     if os.path.exists(CONFIG_PATH):
         try:
             # utf-8-sig：兼容 Windows 记事本等工具写出的 BOM 头文件
             with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
                 loaded = json.load(f)
-                cfg.update(loaded)
-        except Exception as e:  # noqa: BLE001 - 与原脚本一致：任何异常都回退默认值
-            print(f"配置文件加载失败: {e}，使用默认安全配置。")
+                if isinstance(loaded, dict):
+                    cfg.update(loaded)
+                else:
+                    raise ValueError("配置文件根节点不是对象")
+        except Exception as e:  # noqa: BLE001
+            backup = f"{CONFIG_PATH}.broken-{int(time.time())}"
+            try:
+                shutil.copy2(CONFIG_PATH, backup)
+                print(
+                    f"配置文件解析失败: {e}，已备份为 {os.path.basename(backup)}，"
+                    f"本次使用默认配置。"
+                )
+            except OSError:
+                print(f"配置文件解析失败: {e}，使用默认安全配置。")
     return normalize_config(cfg)
 
 
@@ -322,6 +341,13 @@ def reload_config() -> dict:
 
 
 def save_config(new_config_data: dict) -> tuple[bool, dict | str]:
+    """保存配置（原子写入）。
+
+    先写临时文件并 fsync，再用 os.replace 原子替换正式文件。
+    这样即使容器在写入过程中被强制停止（升级/重启很常见），
+    也不会留下被截断的 config.json —— 否则下次启动会因解析失败
+    回退到默认值，表现为「设置全丢了」。
+    """
     global _config
     with _lock:
         current = load_config()
@@ -329,15 +355,24 @@ def save_config(new_config_data: dict) -> tuple[bool, dict | str]:
         # 先归一（监听目录转相对路径、权重档位校验等），
         # 保证「内存里的值」与「文件里的值」完全一致。
         normalized = normalize_config(current)
+        tmp_path = CONFIG_PATH + ".tmp"
         try:
             os.makedirs(CONFIG_DIR, exist_ok=True)
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(normalized, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, CONFIG_PATH)
             # 同步更新内存缓存，否则 current_config() 仍读旧值，
             # 导致「保存成功但必须重启才生效」。
             _config = normalized
             return True, dict(_config)
         except Exception as e:  # noqa: BLE001
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
             return False, str(e)
 
 

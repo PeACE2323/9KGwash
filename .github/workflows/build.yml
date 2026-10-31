@@ -156,6 +156,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_config_persist
 
+      - name: 运行持久化与界面测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_persist_ui
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

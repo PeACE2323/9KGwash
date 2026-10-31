@@ -13,8 +13,8 @@
     hound: { title: "空间猎犬", desc: "排查并清理本地无 STRM 的空壳目录" },
     dedup: { title: "影片查重", desc: "全库番号比对与一键洗板清理" },
     deliver: { title: "文件投递", desc: "关键字改名 + 按规则投递到指定目录" },
-    washcfg: { title: "洗版权重与路径", desc: "洗版权重档位与存储路径" },
-    config: { title: "运行配置", desc: "Webhook 与运行模式" },
+    washcfg: { title: "洗版权重", desc: "洗板对决的档位优先级与自定义关键字" },
+    config: { title: "运行配置", desc: "Webhook、运行模式与存储路径" },
     logs: { title: "活动日志", desc: "洗板全过程实时输出" },
   };
 
@@ -175,11 +175,13 @@
     }
     if (name === "deliver") loadDeliverConfig();
     if (name === "washcfg") {
-      // 洗版配置页：权重档位 + 存储路径（都需要 /api/status 回填）
-      loadStatus();
+      // 洗版权重页：只需要权重档位
       loadWeights();
     }
-    if (name === "config") loadStatus();
+    if (name === "config") {
+      // 运行配置页：Webhook 状态 + 存储路径表单（需要 /api/status 回填）
+      loadStatus();
+    }
     if (name === "hound" || name === "dedup") loadScanPaths(name);
   }
 
@@ -1468,11 +1470,13 @@
     loadBrowser(start);
   }
   /* -------------------- 猎犬 / 查重的独立扫描路径 -------------------- */
+  /* UI 形态：一行一个路径的列表，每行右侧有「浏览」和「删除」按钮，
+     顶部有「添加」按钮。留空则自动回退默认（元数据侧监听目录）。 */
+
   /** 读取并回填某任务页的扫描路径 */
   function loadScanPaths(kind) {
     const st = state.lastStatus;
     if (!st) {
-      // 没有 status 时先拉一次
       api("/api/status").then((s) => {
         if (s && s.success) {
           state.lastStatus = s;
@@ -1485,10 +1489,19 @@
   }
 
   function fillScanPaths(kind, st) {
-    const el = $(kind + "-paths");
-    if (!el) return;
+    const listEl = $(kind + "-path-list");
+    if (!listEl) return;
     const list = (kind === "hound" ? st.hound_scan_paths : st.dedup_scan_paths) || [];
-    el.value = list.join("\n");
+
+    listEl.replaceChildren();
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "scan-path-empty";
+      empty.textContent = "尚未设置，将使用默认目录";
+      listEl.appendChild(empty);
+    } else {
+      list.forEach((p) => listEl.appendChild(makeScanPathRow(kind, p)));
+    }
 
     const hint = $(kind + "-paths-hint");
     if (hint) {
@@ -1497,7 +1510,7 @@
         hint.textContent = `共 ${list.length} 个扫描目录`;
         hint.className = "field-hint";
       } else if (defaults.length) {
-        hint.textContent = `未单独设置，将使用默认：${defaults.join(" , ")}`;
+        hint.textContent = `未设置，默认扫描：${defaults.join(" , ")}`;
         hint.className = "field-hint";
       } else {
         hint.textContent = "未设置扫描路径，且没有可用的默认目录";
@@ -1506,17 +1519,88 @@
     }
   }
 
+  /** 构造一行路径：输入框 + 浏览 + 删除 */
+  function makeScanPathRow(kind, value) {
+    const row = document.createElement("div");
+    row.className = "scan-path-item";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "scan-path-input";
+    input.value = value || "";
+    input.placeholder = "/metadata/9KG/STRM";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+
+    const browse = document.createElement("button");
+    browse.type = "button";
+    browse.className = "scan-path-btn";
+    browse.title = "浏览选择目录";
+    browse.textContent = "📁";
+    browse.addEventListener("click", () => {
+      browserTargetId = input;
+      $("browser").hidden = false;
+      const st = state.lastStatus || {};
+      loadBrowser(st.metadata_base_path || st.mount_base_path || "/");
+    });
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "scan-path-btn danger";
+    del.title = "删除此路径";
+    del.textContent = "🗑️";
+    del.addEventListener("click", () => {
+      row.remove();
+      const listEl = $(kind + "-path-list");
+      if (listEl && !listEl.querySelector(".scan-path-item")) {
+        fillScanPathsEmpty(kind);
+      }
+    });
+
+    row.appendChild(input);
+    row.appendChild(browse);
+    row.appendChild(del);
+    return row;
+  }
+
+  function fillScanPathsEmpty(kind) {
+    const listEl = $(kind + "-path-list");
+    if (!listEl) return;
+    listEl.replaceChildren();
+    const empty = document.createElement("div");
+    empty.className = "scan-path-empty";
+    empty.textContent = "尚未设置，将使用默认目录";
+    listEl.appendChild(empty);
+  }
+
+  /** 添加一行空白路径 */
+  function addScanPathRow(kind) {
+    const listEl = $(kind + "-path-list");
+    if (!listEl) return;
+    const empty = listEl.querySelector(".scan-path-empty");
+    if (empty) empty.remove();
+    const row = makeScanPathRow(kind, "");
+    listEl.appendChild(row);
+    const input = row.querySelector(".scan-path-input");
+    if (input) input.focus();
+  }
+
+  /** 收集当前列表里的路径并保存 */
   async function saveScanPaths(kind) {
-    const el = $(kind + "-paths");
-    if (!el) return;
-    const vals = el.value
-      .split(/[\n,]/)
-      .map((s) => s.trim())
+    const listEl = $(kind + "-path-list");
+    if (!listEl) return;
+    const vals = [...listEl.querySelectorAll(".scan-path-input")]
+      .map((el) => (el.value || "").trim())
       .filter(Boolean);
+    // 去重
+    const uniq = [];
+    vals.forEach((v) => {
+      if (!uniq.includes(v)) uniq.push(v);
+    });
 
     const key = kind === "hound" ? "HOUND_SCAN_PATHS" : "DEDUP_SCAN_PATHS";
     try {
-      const res = await apiPost("/api/config", { [key]: vals });
+      const res = await apiPost("/api/config", { [key]: uniq });
       if (res.success) {
         toast(kind === "hound" ? "空间猎犬扫描路径已保存" : "影片查重扫描路径已保存");
         const s = await api("/api/status");
@@ -2046,18 +2130,12 @@
     $("hound-del-btn").addEventListener("click", deleteEmptyFolders);
     $("hound-cancel-btn").addEventListener("click", cancelHound);
 
-    // 猎犬/查重的扫描路径：保存 + 浏览
+    // 猎犬/查重的扫描路径：列表式增删 + 保存
+    document.querySelectorAll(".scan-path-add").forEach((btn) => {
+      btn.addEventListener("click", () => addScanPathRow(btn.dataset.kind));
+    });
     document.querySelectorAll(".scan-path-save").forEach((btn) => {
       btn.addEventListener("click", () => saveScanPaths(btn.dataset.kind));
-    });
-    document.querySelectorAll(".scan-path-browse").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        browserTargetId = $(btn.dataset.target);
-        $("browser").hidden = false;
-        const st = state.lastStatus || {};
-        const start = st.metadata_base_path || st.mount_base_path || "/";
-        loadBrowser(start);
-      });
     });
 
     $("dedup-scan-btn").addEventListener("click", scanDuplicates);
