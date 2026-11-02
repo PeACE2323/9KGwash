@@ -1980,19 +1980,33 @@
           )
           .join("");
         const files = (item.files || [])
-          .map(
-            (f) =>
+          .map((f) => {
+            // 扫描完直接显示完整目录，不用悬停才能看到
+            const dir = (f.path || "").replace(/[\\/][^\\/]+$/, "");
+            return (
               '<div class="dup-file ' +
               (f.is_winner ? "winner" : "loser") +
-              '"><span class="name" title="' +
+              '">' +
+              '<span class="dup-mark">' +
+              (f.is_winner ? "👑" : "🗑️") +
+              "</span>" +
+              '<span class="dup-info">' +
+              '<span class="name" title="' +
               escapeHtml(f.path) +
               '">' +
-              (f.is_winner ? "👑 " : "🗑️ ") +
               escapeHtml(f.name) +
-              '</span><span class="tag">权:' +
+              "</span>" +
+              '<span class="dup-dir" title="' +
+              escapeHtml(dir) +
+              '">' +
+              escapeHtml(dir) +
+              "</span>" +
+              "</span>" +
+              '<span class="tag">权:' +
               f.weight +
               "</span></div>"
-          )
+            );
+          })
           .join("");
         return (
           '<div class="dup-group"><div class="dup-head">' +

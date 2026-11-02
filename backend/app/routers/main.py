@@ -23,14 +23,15 @@ import os
 
 from flask import Blueprint, jsonify, render_template, request
 
-from .. import __version__, config
+from .. import __version__, config, version_full
 from ..logging_setup import logger
 from ..services import history, library, webhooks
 from ..services.fanhao import main_fanhao
 
 bp = Blueprint("main", __name__)
 
-VERSION_LABEL = f"v{__version__} 智能全端清退与一键复制版"
+# 界面与日志统一使用完整版本串（含构建 commit 与日期）
+VERSION_LABEL = version_full()
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +581,7 @@ def api_status():
         {
             "success": True,
             "version": __version__,
+            "version_full": version_full(),
             "dry_run": config.get_dry_run(),            "ignore_leading_digits": config.get_ignore_leading_digits(),
             "db_webhook": config.get_db_webhook(),
             "strm_webhook": config.get_strm_webhook(),
@@ -617,7 +619,7 @@ def api_history():
 
 @bp.route("/healthz")
 def healthz():
-    return jsonify({"status": "ok", "version": __version__})
+    return jsonify({"status": "ok", "version": __version__, "version_full": version_full()})
 
 
 # ---------------------------------------------------------------------------

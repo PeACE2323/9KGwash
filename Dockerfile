@@ -27,6 +27,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GUNICORN_TIMEOUT=300 \
     XIBAN_CONFIG_DIR=/config
 
+# 构建信息：由 CI 注入，界面右下角会显示用「v版本号+commit · 日期」
+# 本地直接 docker build 时取不到，会自动省略这部分
+ARG BUILD_COMMIT=""
+ARG BUILD_TIME=""
+ENV XIBAN_BUILD_COMMIT=${BUILD_COMMIT} \
+    XIBAN_BUILD_TIME=${BUILD_TIME}
+
 # tzdata：保证日志时间与宿主机一致（可用 TZ 覆盖）；ca-certificates：Webhook HTTPS 调用
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata ca-certificates \

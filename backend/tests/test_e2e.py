@@ -485,7 +485,7 @@ check("healthz 200", r.status_code == 200 and r.get_json()["status"] == "ok")
 r = client.get("/")
 html = r.data.decode("utf-8")
 check("首页 200", r.status_code == 200)
-check("首页含版本号", "9.15.0" in html)
+check("首页含版本号", "v" in html and __import__("app").BASE_VERSION in html)
 # 新版布局：左侧导航 + 右侧视图
 check("首页含侧边导航", 'id="sidebar"' in html and 'id="nav"' in html)
 check("首页含全部功能视图",

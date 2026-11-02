@@ -162,6 +162,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_persist_ui
 
+      - name: 运行查重路径与版本号测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_dedup_path_version
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test
@@ -197,6 +203,12 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: 注入构建信息（供界面显示版本+commit+日期）
+        id: buildinfo
+        run: |
+          echo "commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
@@ -206,5 +218,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_COMMIT=${{ steps.buildinfo.outputs.commit }}
+            BUILD_TIME=${{ steps.buildinfo.outputs.time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
