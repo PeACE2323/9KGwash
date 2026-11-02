@@ -208,7 +208,7 @@ check("子规则1 后置标记", out == "AAA-111-U_r1.mp4", out)
 
 _, ch, _ = deliver.classify_file("BBB-222_r2.mp4", c3)
 out = naming.apply_mark_to_fanhao("BBB-222_r2.mp4", ch["mark"], ch["mark_position"])
-check("子规则2 前置标记", out == "U-BBB-222_r2.mp4", out)
+check("子规则2 前置标记", out == "UBBB-222_r2.mp4", out)
 
 _, ch, _ = deliver.classify_file("CCC-333_r3.mp4", c3)
 check("子规则3 无标记 -> mark 为空", ch["mark"] == "")

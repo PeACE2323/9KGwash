@@ -71,13 +71,18 @@ print("\n=== A. JAV 番号：标记位置 ===")
 after = naming.apply_mark_to_fanhao(F, "-U", "after")
 before = naming.apply_mark_to_fanhao(F, "U", "before")
 check("后置标记", after == "www.98T.la@DASS-787-U無防備に黒パンスト.mp4", after)
-check("前置标记", before == "www.98T.la@U-DASS-787無防備に黒パンスト.mp4", before)
-check("发布站前缀保留在最前", before.startswith("www.98T.la@U-DASS-787"))
+check("前置标记", before == "www.98T.la@UDASS-787無防備に黒パンスト.mp4", before)
+check("发布站前缀保留在最前", before.startswith("www.98T.la@UDASS-787"))
 
-# 各种标记写法的归一化
-for raw in ("U", "U-", "-U", "_U"):
+# 各种标记写法：严格照填写内容原样插入，不做任何符号增删
+for raw, expect in (
+    ("U", "www.98T.la@UDASS-787無防備に黒パンスト.mp4"),
+    ("U-", "www.98T.la@U-DASS-787無防備に黒パンスト.mp4"),
+    ("-U", "www.98T.la@-UDASS-787無防備に黒パンスト.mp4"),
+    ("_U", "www.98T.la@_UDASS-787無防備に黒パンスト.mp4"),
+):
     got = naming.apply_mark_to_fanhao(F, raw, "before")
-    check(f"前置标记 {raw!r} 归一为 U-", got == "www.98T.la@U-DASS-787無防備に黒パンスト.mp4", got)
+    check(f"前置标记 {raw!r} 原样插入", got == expect, got)
 
 check("方括号标记 [U] 原样使用",
       naming.apply_mark_to_fanhao("DASS-787.mp4", "[U]", "before") == "[U]DASS-787.mp4",
@@ -90,8 +95,8 @@ for pos, mark in (("after", "-U"), ("before", "U")):
     check(f"{pos} 幂等不重复叠加", once == twice, (once, twice))
 
 # 前置数字厂牌
-check("前置数字厂牌支持前置标记",
-      naming.apply_mark_to_fanhao("259LUXU-1900.mp4", "U", "before") == "U-259LUXU-1900.mp4")
+check("前置数字厂牌支持前置标记（原样插入，不加分隔符）",
+      naming.apply_mark_to_fanhao("259LUXU-1900.mp4", "U", "before") == "U259LUXU-1900.mp4")
 check("前置数字厂牌支持后置标记",
       naming.apply_mark_to_fanhao("259LUXU-1900.mp4", "-U", "after") == "259LUXU-1900-U.mp4")
 
@@ -100,13 +105,13 @@ check("无番号不动", naming.apply_mark_to_fanhao("no fanhao.mp4", "U", "befo
 
 print("\n=== B. 普通关键字规则：标记位置 ===")
 plain = "Some.Video.2024.mp4"
-check("普通后置（自动加下划线分隔）",
-      naming.apply_mark(plain, "restored", "after", prefer_fanhao=False) == "Some.Video.2024_restored.mp4",
+check("普通后置（严格原样，不加分隔符）",
+      naming.apply_mark(plain, "restored", "after", prefer_fanhao=False) == "Some.Video.2024restored.mp4",
       naming.apply_mark(plain, "restored", "after", prefer_fanhao=False))
 check("普通后置（带下划线标记）",
       naming.apply_mark(plain, "_restored", "after", prefer_fanhao=False) == "Some.Video.2024_restored.mp4")
 check("普通前置",
-      naming.apply_mark(plain, "U", "before", prefer_fanhao=False) == "U-Some.Video.2024.mp4",
+      naming.apply_mark(plain, "U", "before", prefer_fanhao=False) == "USome.Video.2024.mp4",
       naming.apply_mark(plain, "U", "before", prefer_fanhao=False))
 check("普通路径保留扩展名",
       naming.apply_mark(plain, "x", "after", prefer_fanhao=False).endswith(".mp4"))
@@ -178,7 +183,7 @@ post_files = os.listdir(os.path.join(OUT, "post"))
 west_files = os.listdir(os.path.join(OUT, "west"))
 other_files = os.listdir(os.path.join(OUT, "other"))
 
-check("前置：#U 在番号前", pre_files == ["U-PRE-111_restored.mp4"], pre_files)
+check("前置：#U 在番号前", pre_files == ["UPRE-111_restored.mp4"], pre_files)
 check("后置：-U 在番号后", post_files == ["POST-222-U_restored.mp4"], post_files)
 check("欧美规则不改名", west_files == ["BlackedRaw.26.09.23.Title.mp4"], west_files)
 check("普通规则后置标记", other_files == ["plainvideo_restored_chs.mp4"], other_files)
@@ -197,7 +202,7 @@ r = client.post(
 )
 d = r.get_json()
 outs = [x["output"] for x in d["results"]]
-check("预览前置", outs[0] == "U-PRE-111_restored.mp4", outs)
+check("预览前置", outs[0] == "UPRE-111_restored.mp4", outs)
 check("预览后置", outs[1] == "POST-222-U_restored.mp4", outs)
 check("预览欧美不改名", outs[2] == "BlackedRaw.26.09.23.x.mp4", outs)
 check("预览返回 mark_position", d["results"][0]["mark_position"] == "before", d["results"][0])

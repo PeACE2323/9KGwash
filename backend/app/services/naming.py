@@ -33,7 +33,58 @@ _PREFIX_PATTERNS = [
 # 允许 2-10 位字母（如 DASS / ABP / START / LUXU）。
 # 前置可选数字厂牌（259LUXU-1900 中的 259），用 \d* 直接并入匹配，
 # 这样「259LUXU-1900」会被整体识别为一个番号，而不是只认出 LUXU-1900。
-_FIND_RE = re.compile(r"(?<![a-z0-9])(\d*)([a-z]{2,10})-(\d{2,6})(?!\d)", re.IGNORECASE)
+#
+# 前置断言说明：
+#   原本要求番号前不能是字母/数字。但「严格原样插入标记」生效后，
+#   会出现 A2BBB-222 这种前置标记紧贴番号的情况，导致后续规则
+#   识别不到番号、链式改名断裂。
+#   现在放宽为：允许紧贴**大写字母或数字**（常见标记 A2 / U / 4K），
+#   但不允许紧贴小写字母，避免把普通英文单词的后半截误判成番号
+#   （如 videoabp-123 不应被识别）。
+#   注意：必须大小写敏感，否则负向断言在 IGNORECASE 下会失效。
+_FIND_RE = re.compile(r"(\d*)([a-z]{2,10})-(\d{2,6})(?!\d)", re.IGNORECASE)
+
+
+def _allow_prefixed_mark(text: str, match) -> bool:
+    """判断该匹配是否允许（番号前紧贴大写字母/数字时允许）。"""
+    start = match.start()
+    if start == 0:
+        return True
+    prev = text[start - 1]
+    # 前一个字符不是 ASCII 字母数字 -> 正常
+    if not prev.isascii() or not prev.isalnum():
+        return True
+    # 前一个是 ASCII 字母/数字：只有当它是大写字母或数字时才放行
+    return prev.isdigit() or prev.isupper()
+
+
+def _skip_leading_digits_of_mark(text: str, m):
+    """当番号前的数字其实是「前置标记」的一部分时，把它排除出番号。
+
+    场景：前置标记 ``A2`` 紧贴番号 ``BBB-222``，得到 ``A2BBB-222``。
+    正则会把 ``2BBB-222`` 整体匹配（``\\d*`` 吞掉了标记里的 2）。
+    此时若该数字前面紧邻大写字母，说明这个数字属于标记，
+    真正的番号应从厂牌字母 ``BBB`` 开始。
+
+    返回 (调整后的起点, 厂牌字母, 数字, 是否剥离过)。
+    """
+    leading = m.group(1)  # 前导数字（可能属于标记）
+    word = m.group(2)
+    digits = m.group(3)
+    if not leading:
+        return m.start(), word, digits, False
+
+    start = m.start()
+    if start == 0:
+        return start, word, digits, False
+
+    prev = text[start - 1]
+    if prev.isascii() and prev.isupper():
+        # 该数字属于前置标记，番号从 word 开始
+        new_start = start + len(leading)
+        return new_start, word, digits, True
+
+    return start, word, digits, False
 
 # 无连字符写法：厂牌字母紧接数字，如 katu00118 / ABP00123 / SSIS888
 # 数字后允许紧跟字母后缀（katu00118hhb 中的 hhb），但要求后缀不是分辨率/编码类词，
@@ -140,6 +191,26 @@ def find_fanhao(name: str) -> dict | None:
             leading, word, digits = m.group(1), m.group(2), m.group(3)
             if word.lower() in _FALSE_POSITIVE_WORDS:
                 continue
+            # 前置紧贴小写字母时视为普通单词的一部分，跳过
+            if not _allow_prefixed_mark(text, m):
+                continue
+            # 前导数字若属于前置标记（A2BBB-222），不计入番号
+            adj_start, word2, digits2, stripped = _skip_leading_digits_of_mark(text, m)
+            if stripped:
+                body = word2 + "-" + digits2
+                cands.append(
+                    {
+                        "start": base + adj_start,
+                        "end": base + adj_start + len(body),
+                        "text": body,
+                        "word": word2,
+                        "digits": digits2,
+                        "suffix": "",
+                        "has_leading": False,
+                        "rank": 0,
+                    }
+                )
+                continue
             cands.append(
                 {
                     "start": base + m.start(),
@@ -219,17 +290,22 @@ def insert_mark_after_fanhao(name: str, mark: str) -> str:
     end = info["end"]
     tail = name[end:]
 
-    # 幂等：番号后已经紧跟这个标记
-    if tail.startswith(mark):
+    m = (mark or "").strip()
+    if not m:
         return name
-    # 兼容「已带其它 -X 标记」的情况：只要标记主体已存在就不重复加
-    normalized = mark if mark.startswith("-") else "-" + mark
-    if re.match(r"^-[A-Z0-9]{1,4}(?![A-Z0-9])", tail, re.IGNORECASE):
-        existing = re.match(r"^-[A-Z0-9]{1,4}", tail, re.IGNORECASE).group(0)
-        if existing.upper() == normalized.upper():
+
+    # 幂等：番号后已经紧跟这个标记，不重复添加
+    if tail.startswith(m):
+        return name
+    # 宽松幂等：若紧贴番号处已存在同样的标记（忽略前导分隔符差异），也不重复加
+    core = m.lstrip("-_").upper()
+    if core:
+        existing = re.match(r"^[-_]?([A-Z0-9]{1,6})(?![A-Z0-9])", tail, re.IGNORECASE)
+        if existing and existing.group(1).upper() == core:
             return name
 
-    return name[:end] + normalized + tail
+    # 严格原样插入：用户填什么就加什么，不自动补 "-"
+    return name[:end] + m + tail
 
 
 def is_jav_filename(name: str) -> bool:
@@ -244,51 +320,48 @@ MARK_POSITIONS = ("after", "before")
 
 
 def _normalize_before_mark(mark: str) -> str:
-    """前置标记统一收尾为「标记 + 连字符」，便于紧贴番号。
+    """前置标记：只做去空白，不增删任何符号。
 
-    ``U``    -> ``U-``
-    ``U-``   -> ``U-``
-    ``-U``   -> ``U-``（去掉前置连字符，避免出现 ``-U-DASS``）
-    ``[U]``  -> ``[U]``（自带收尾符号时原样使用）
+    历史上这里会自动补 "U" -> "U-"、剥掉开头的 "-"。
+    但那样会「自作主张」修改用户填写的标记，
+    现在改为严格原样返回：填 "U" 就是 "U"，填 "-U" 就是 "-U"。
     """
-    m = (mark or "").strip()
-    if not m:
-        return m
-    # 去掉开头多余的分隔符
-    m = m.lstrip("-_")
-    if not m:
-        return m
-    if m[-1] in "-_.[]（）()【】":
-        return m
-    return m + "-"
+    return (mark or "").strip()
 
 
 def insert_mark_before_fanhao(name: str, mark: str) -> str:
     """在番号**前面**插入标记，番号及之后内容原样保留。
 
     例：``www.98T.la@DASS-787無防備...mp4`` + mark ``U``
-        => ``www.98T.la@U-DASS-787無防備...mp4``
-        （标记紧贴番号前，发布站前缀仍在最前）
+        => ``www.98T.la@UDASS-787無防備...mp4``
+        （标记紧贴番号前，严格按填写内容原样插入，不自动补连字符）
 
     幂等：若番号前已经是该标记则不重复添加。
     """
     if not mark:
         return name
+
+    pre_mark = _normalize_before_mark(mark)
+    if not pre_mark:
+        return name
+
     info = find_fanhao(name)
     if not info:
         return name
 
     start = info["start"]
     prefix = name[:start]
-    pre_mark = _normalize_before_mark(mark)
 
-    # 幂等判断：番号前已带同一标记（只比较紧邻番号的那一段，避免误判）
-    core = pre_mark.rstrip("-_.")
-    if core:
-        # 匹配「标记 + 可选分隔符」正好贴在番号前
-        pattern = re.escape(core) + r"[-_. ]*$"
-        if re.search(pattern, prefix, re.IGNORECASE):
-            return name
+    # 幂等判断要覆盖两种形态：
+    #   1) 标记紧邻番号之前：prefix 以标记结尾
+    #   2) 标记已经贴到番号上：此时 find_fanhao 会把 "UDASS-787"
+    #      整体当成番号，所以要检查识别出的番号是否以该标记开头
+    if prefix.endswith(pre_mark):
+        return name
+    if len(info["fanhao"]) > len(pre_mark) and info["fanhao"].upper().startswith(
+        pre_mark.upper()
+    ):
+        return name
 
     return prefix + pre_mark + name[start:]
 
@@ -316,16 +389,16 @@ def insert_mark_to_plain_name(name: str, mark: str, position: str = "after") -> 
     m = mark.strip()
 
     if str(position).lower() == "before":
-        pre = m if m[-1] in "-_.[]（）()【】" else m + "-"
-        if base.startswith(pre):
+        # 严格原样：不自动补 "-"
+        if base.startswith(m):
             return name
-        return pre + name
+        return m + name
 
-    # 默认 after：追加到主干名末尾，扩展名保持最末
+    # 默认 after：严格原样追加到主干名末尾，扩展名保持最末
+    # 不再自动插入 "_" 分隔符，用户需要就自己写在标记里
     if base.endswith(m):
         return name
-    sep = "" if m[:1] in "-_. []（）()【】" else "_"
-    return base + sep + m + ext
+    return base + m + ext
 
 
 def apply_mark(name: str, mark: str, position: str = "after", prefer_fanhao: bool = True) -> str:

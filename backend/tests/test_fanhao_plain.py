@@ -108,7 +108,7 @@ F = "katu00118hhb_restored.mp4"
 after = naming.apply_mark_to_fanhao(F, "-U", "after")
 before = naming.apply_mark_to_fanhao(F, "U", "before")
 check("后置标记：加在数字后、后缀前", after == "katu00118-Uhhb_restored.mp4", after)
-check("前置标记：加在番号前", before == "U-katu00118hhb_restored.mp4", before)
+check("前置标记：加在番号前", before == "Ukatu00118hhb_restored.mp4", before)
 check("后置幂等", naming.apply_mark_to_fanhao(after, "-U", "after") == after)
 
 F2 = "katu00118.mp4"

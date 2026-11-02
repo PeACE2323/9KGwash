@@ -71,7 +71,7 @@ def build_cfg(position):
                     "children": [
                         {
                             "keywords": ["laf", "luxu", "mium", "stcv"],
-                            "mark": "U",
+                            "mark": "-U",
                             "mark_position": position,
                         }
                     ],
@@ -123,15 +123,15 @@ check("300MIUM-1457 番号前有数字 -> 跳过", hit is False, out)
 # 番号前无数字 -> 正常执行
 hit, out = run("98T@LAF-1903.mp4", "before")
 check("98T@LAF-1903 前无数字 -> 执行", hit is True, out)
-check("标记插在番号前", out == "98T@U-LAF-1903.mp4", out)
+check("标记插在番号前", out == "98T@-ULAF-1903.mp4", out)
 
 hit, out = run("STCV-001.mp4", "before")
 check("STCV-001 前无数字 -> 执行", hit is True, out)
-check("结果 U-STCV-001.mp4", out == "U-STCV-001.mp4", out)
+check("结果 -USTCV-001.mp4", out == "-USTCV-001.mp4", out)
 
 hit, out = run("LAF-1903.mp4", "before")
 check("LAF-1903 前无数字 -> 执行", hit is True, out)
-check("结果 U-LAF-1903.mp4", out == "U-LAF-1903.mp4", out)
+check("结果 -ULAF-1903.mp4", out == "-ULAF-1903.mp4", out)
 
 # ===========================================================================
 print("\n=== C. 标记加在番号后（after） ===")

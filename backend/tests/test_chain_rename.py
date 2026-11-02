@@ -117,13 +117,13 @@ hits = deliver.resolve_matches_by_group(fn, cfg_chain)
 check("跨 3 组命中产生 3 条记录", len(hits) == 3, len(hits))
 check("组A 改名", hits[0]["name_after"] == "AAA-111-A_both.mp4", hits[0]["name_after"])
 check("组B 基于组A结果继续改名",
-      hits[1]["name_before"] == hits[0]["name_after"] and hits[1]["name_after"] == "B-AAA-111-A_both.mp4",
+      hits[1]["name_before"] == hits[0]["name_after"] and hits[1]["name_after"] == "BAAA-111-A_both.mp4",
       (hits[1]["name_before"], hits[1]["name_after"]))
 check("组C 基于组B结果继续改名",
-      hits[2]["name_before"] == hits[1]["name_after"] and hits[2]["name_after"] == "B-AAA-111-A_both_c.mp4",
+      hits[2]["name_before"] == hits[1]["name_after"] and hits[2]["name_after"] == "BAAA-111-A_both_c.mp4",
       (hits[2]["name_before"], hits[2]["name_after"]))
 check("最终文件名包含全部标记",
-      all(x in hits[-1]["name_after"] for x in ("-A", "B-", "_c")), hits[-1]["name_after"])
+      all(x in hits[-1]["name_after"] for x in ("-A", "BAAA-111", "_c")), hits[-1]["name_after"])
 
 # 只命中部分组时，链式仍成立
 cfg_partial = deliver.normalize_deliver_config({
@@ -179,7 +179,7 @@ c = os.listdir(os.path.join(OUT, "C"))
 check("组A 目录为空（不投递）", a == [], a)
 check("组B 目录为空（不投递）", b == [], b)
 check("组C 目录得到链式改名后的文件",
-      c == ["B-AAA-111-A_both_c.mp4"], c)
+      c == ["BAAA-111-A_both_c.mp4"], c)
 
 detail = next((d for d in stats["details"] if d.get("file") == "AAA-111_both.mp4"), None)
 check("结果记录链式轨迹", detail and len(detail.get("chain", [])) == 3,
@@ -191,7 +191,7 @@ print("\n=== E. 预览接口回显链式结果 ===")
 r = client.post("/api/deliver/preview", json={"files": [fn], "groups": cfg_chain["GROUPS"]})
 d = r.get_json()
 res = d["results"][0]
-check("预览 output 为链式最终名", res["output"] == "B-AAA-111-A_both_c.mp4", res["output"])
+check("预览 output 为链式最终名", res["output"] == "BAAA-111-A_both_c.mp4", res["output"])
 check("预览 matched_group 为最后一组", res["matched_group"] == "组C", res["matched_group"])
 check("预览 chain 长度 3", len(res["chain"]) == 3, len(res["chain"]))
 check("预览 chain 顺序正确",
