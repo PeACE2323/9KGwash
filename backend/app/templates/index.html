@@ -541,6 +541,7 @@
             <select class="group-kind">
               <option value="jav">JAV 番号规则</option>
               <option value="western">欧美番号规则</option>
+              <option value="amateur">素人番号规则</option>
               <option value="other">普通关键字规则</option>
               <option value="fallback">兜底规则</option>
             </select>
@@ -570,6 +571,10 @@
         </div>
         <div class="group-western-tip">
           欧美组：关键字填<strong>厂牌</strong>（如 blackedraw），需同时命中厂牌且含「年.月.日」才会投递。此类型<strong>不提供标记</strong>。
+        </div>
+        <div class="group-amateur-tip">
+          素人组：关键字命中后，若番号前<strong>紧挨着数字</strong>（如 <code>259LUXU-1903</code>）且标记要求加在<strong>番号前</strong>，则该子规则<strong>跳过不生效</strong>；
+          标记加在<strong>番号后</strong>时正常执行。番号前无数字（如 <code>98T@LUXU-1903</code>）时不受限制，正常加标记。
         </div>
 
         <!-- 子规则列表 -->

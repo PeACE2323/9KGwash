@@ -67,7 +67,7 @@ def default_deliver_config() -> dict:
     }
 
 
-VALID_KINDS = ("jav", "western", "other", "fallback")
+VALID_KINDS = ("jav", "western", "amateur", "other", "fallback")
 
 # ---------------------------------------------------------------------------
 # 告警去重：后台监控会周期性触发，同一问题不应反复刷屏。
@@ -404,6 +404,30 @@ def resolve_matches_by_group(filename: str, cfg: dict) -> list[dict]:
                     f"   [-] ↩️ [投递] 组[{group.get('name')}]命中厂牌[{kw}]但无欧美日期，跳过该子规则"
                 )
                 continue
+            if kind == "amateur":
+                # 素人番号规则的特殊约束：
+                # 若番号前「紧挨着数字」（如 259LUXU-1903），说明这是带数字厂牌的
+                # 正规番号，此时要看标记加在哪：
+                #   - 标记加在【番号前】 -> 跳过该子规则（不生效）
+                #   - 标记加在【番号后】 -> 正常执行
+                # 若番号前没有紧挨数字（如 98T@LUXU-1903、STCV-001），
+                # 无论标记位置都正常执行。
+                fanhao_info = naming.find_fanhao(current)
+                if not fanhao_info:
+                    logger.info(
+                        f"   [-] ↩️ [投递] 组[{group.get('name')}]命中关键词[{kw}]但无番号，跳过该子规则"
+                    )
+                    continue
+
+                if fanhao_info.get("has_leading_digits") and child.get(
+                    "mark_position", "after"
+                ) == "before":
+                    logger.info(
+                        f"   [-] ↩️ [投递] 组[{group.get('name')}]命中关键词[{kw}]，"
+                        f"番号[{fanhao_info.get('fanhao')}]前紧挨数字且标记要求加在番号前，"
+                        f"按素人规则跳过该子规则"
+                    )
+                    continue
 
             picked = (child, kw)
             break  # 组内只取第一条命中的子规则
@@ -418,7 +442,7 @@ def resolve_matches_by_group(filename: str, cfg: dict) -> list[dict]:
         after = before
 
         if mark:
-            if kind == "jav":
+            if kind in ("jav", "amateur"):
                 after = naming.apply_mark_to_fanhao(before, mark, position)
             elif kind == "other":
                 after = naming.apply_mark(before, mark, position, prefer_fanhao=False)

@@ -562,6 +562,7 @@
   const KIND_BADGE = {
     jav: ["JAV", "badge-jav"],
     western: ["欧美", "badge-western"],
+    amateur: ["素人", "badge-amateur"],
     other: ["普通", "badge-other"],
     fallback: ["兜底", "badge-fallback"],
   };
@@ -759,6 +760,7 @@
     node.classList.toggle("is-disabled", !enabled);
     node.classList.toggle("is-fallback", kind === "fallback");
     node.classList.toggle("is-western", kind === "western");
+    node.classList.toggle("is-amateur", kind === "amateur");
     // 欧美/兜底组不提供标记，隐藏子规则里的标记控件
     node.classList.toggle("no-mark", kind === "western" || kind === "fallback");
     node.querySelector(".group-name").title = name;

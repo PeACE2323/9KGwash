@@ -168,6 +168,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_dedup_path_version
 
+      - name: 运行素人番号规则测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_amateur_rule
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test
