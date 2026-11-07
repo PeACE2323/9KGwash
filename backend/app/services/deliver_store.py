@@ -50,16 +50,31 @@ def load_deliver_config() -> dict:
 
 
 def save_deliver_config(raw: dict) -> tuple[bool, dict | str]:
+    """保存投递配置（原子写入）。
+
+    与 config.py 保持一致：临时文件 + fsync + os.replace。
+    容器升级时若在写入过程中被强制停止，不会留下被截断的 deliver.json
+    （否则下次启动会因解析失败回退默认配置，表现为「投递规则全丢」）。
+    """
     global _cfg
     with _lock:
         cfg = deliver.normalize_deliver_config(raw)
+        tmp_path = DELIVER_CONFIG_FILE + ".tmp"
         try:
             os.makedirs(app_config.CONFIG_DIR, exist_ok=True)
-            with open(DELIVER_CONFIG_FILE, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, DELIVER_CONFIG_FILE)
             _cfg = cfg
             return True, cfg
         except Exception as e:  # noqa: BLE001
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
             return False, str(e)
 
 

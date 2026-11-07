@@ -180,6 +180,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_strict_mark
 
+      - name: 运行猎犬网盘检查测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_hound_cloud
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

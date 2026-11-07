@@ -142,7 +142,10 @@
                 <button class="btn btn-primary btn-sm" id="hound-scan-btn">🔍 开始扫描</button>
               </div>
             </div>
-            <p class="view-tip">排查本地「没有 STRM」的残留空壳目录，可一键清除。扫描进度会实时输出到活动日志。</p>
+            <p class="view-tip">
+              排查本地「没有有效内容」的残留空壳目录，并检查其<strong>对应的网盘目录是否也为空</strong>。
+              扫描进度会实时输出到活动日志。
+            </p>
 
             <div class="scan-path-panel">
               <div class="scan-path-head">
@@ -153,11 +156,23 @@
               <small class="field-hint" id="hound-paths-hint"></small>
             </div>
 
+            <div class="scan-path-panel">
+              <div class="scan-path-head">
+                <span class="scan-path-title">内容后缀（含这些后缀的文件视为「有内容」）</span>
+                <span class="scan-path-head-actions">
+                  <button type="button" class="btn btn-ghost btn-xs" id="hound-exts-reset">恢复默认</button>
+                </span>
+              </div>
+              <div class="kw-input" id="hound-exts-list" data-placeholder="输入后缀后回车，如 .strm"></div>
+              <small class="field-hint" id="hound-exts-hint"></small>
+            </div>
+
             <div class="result-box" id="hound-results">
               <div class="empty-hint">暂无空壳扫描数据<br><small>点击右上角「开始扫描」</small></div>
             </div>
             <div class="panel-actions" id="hound-actions" hidden>
-              <button class="btn btn-danger" id="hound-del-btn">🗑️ 确认删除全部</button>
+              <button class="btn btn-danger" id="hound-del-btn">🗑️ 删除本地</button>
+              <button class="btn btn-danger" id="hound-del-both-btn">🧹 两边都删</button>
               <button class="btn btn-ghost" id="hound-cancel-btn">取消</button>
             </div>
           </div>

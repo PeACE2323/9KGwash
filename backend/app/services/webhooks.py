@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -18,6 +20,54 @@ from ..services.fanhao import get_weight_and_fanhao, is_jav, parse_fanhao_info
 
 # 本模块日志统一打上分类标签，供前端「活动日志」按标签页筛选
 logger = categorized("emby")
+
+
+# ---------------------------------------------------------------------------
+# CD2 通知的异步执行
+#
+# handle_cd2 会同步等待挂载刷出（最多 60s），分盘还要再等 20s。
+# 若直接在请求线程里跑，8 个并发 webhook 就能占满 gunicorn 的全部线程，
+# 导致 Web UI 完全无响应。
+# 这里改为「立即返回 + 后台线程池处理」，并限制排队上限防止内存无限增长。
+# ---------------------------------------------------------------------------
+_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="cd2-wash")
+_pending = 0
+_pending_guard = threading.Lock()
+_MAX_PENDING = 30
+
+
+def _run_cd2(payload) -> None:
+    global _pending
+    try:
+        handle_cd2(payload)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"🚀 [通关] 后台处理异常: {e}")
+    finally:
+        with _pending_guard:
+            _pending = max(0, _pending - 1)
+
+
+def enqueue_cd2(payload) -> bool:
+    """把 CD2 通知丢到后台线程池，立即返回。
+
+    返回 False 表示队列已满、本次通知被丢弃（会写日志提醒）。
+    """
+    global _pending
+    with _pending_guard:
+        if _pending >= _MAX_PENDING:
+            logger.warning(
+                f"⚠️ [通关] 待处理通知已达上限 {_MAX_PENDING} 个，本次通知已丢弃，"
+                f"请检查挂载是否正常或降低 CD2 推送频率。"
+            )
+            return False
+        _pending += 1
+    _pool.submit(_run_cd2, payload)
+    return True
+
+
+def pending_count() -> int:
+    with _pending_guard:
+        return _pending
 
 
 # ---------------------------------------------------------------------------

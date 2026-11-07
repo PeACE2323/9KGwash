@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 
 from .. import config
 from ..logging_setup import categorized
@@ -68,7 +69,44 @@ def build_versions(competitors: list[dict]) -> list[dict]:
     return list(version_groups.values())
 
 
+# ---------------------------------------------------------------------------
+# 并发保护：按番号互斥
+#
+# 同一番号的两个文件（例如 ABP-123.mp4 与 ABP-123-C.mkv）几乎同时落盘时，
+# 会触发两次并发的 webhook 处理。若不互斥，两个线程会各自读取竞争者列表、
+# 各自选出不同的「王者」，然后互删文件。
+# 用按 canonical 番号分桶的锁，只让同一番号的洗板串行，不同番号仍可并行。
+# ---------------------------------------------------------------------------
+_locks: dict[str, threading.RLock] = {}
+_locks_guard = threading.Lock()
+
+# 锁表上限，防止长期运行后无限增长；超出时整体清空（锁本身无状态）
+_MAX_LOCKS = 2000
+
+
+def _lock_for(key: str) -> threading.RLock:
+    with _locks_guard:
+        lock = _locks.get(key)
+        if lock is None:
+            if len(_locks) >= _MAX_LOCKS:
+                _locks.clear()
+            lock = threading.RLock()
+            _locks[key] = lock
+        return lock
+
+
 def process_xiban(file_path: str) -> None:
+    """洗板入口：同一番号串行执行，避免并发互删。"""
+    target_canonical, _target_raw, _ = parse_fanhao_info(os.path.basename(file_path))
+    if not target_canonical or not is_jav(target_canonical):
+        logger.info(f"ℹ️ [跳过] 目标 [{os.path.basename(file_path)}] 非 JAV 番号，不参与洗板。")
+        return
+
+    with _lock_for(target_canonical.upper()):
+        _process_xiban_locked(file_path)
+
+
+def _process_xiban_locked(file_path: str) -> None:
     target_canonical, target_raw, _ = parse_fanhao_info(os.path.basename(file_path))
     if not target_canonical or not is_jav(target_canonical):
         logger.info(f"ℹ️ [跳过] 目标 [{os.path.basename(file_path)}] 非 JAV 番号，不参与洗板。")

@@ -2197,3 +2197,85 @@ html[data-theme="light"] .scan-path-item {
   border-radius: 3px;
   background: rgba(52, 211, 153, 0.14);
 }
+
+/* ---------- 空间猎犬：网盘侧状态 ---------- */
+.shell-item {
+  /* 覆盖旧样式：改为「标记 + 两行信息 + 状态徽标」的横向布局 */
+  align-items: flex-start;
+}
+
+.shell-item .shell-mark {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.shell-item .shell-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shell-item .path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.shell-item .shell-mount {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.shell-item .shell-badge {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.shell-badge.shell-ok {
+  color: var(--green-text);
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.34);
+}
+.shell-badge.shell-bad {
+  color: var(--red-text);
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.34);
+}
+.shell-badge.shell-warn {
+  color: var(--yellow-text);
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.34);
+}
+.shell-badge.shell-dim {
+  color: var(--text-faint);
+  background: rgba(148, 163, 184, 0.1);
+  border-color: var(--border-strong);
+}
+
+/* 面板标题右侧放多个按钮 */
+.scan-path-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 700px) {
+  .shell-item { flex-wrap: wrap; }
+  .shell-item .shell-badge { margin-left: 21px; }
+}

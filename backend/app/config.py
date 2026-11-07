@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -43,7 +44,34 @@ DEFAULT_CONFIG = {
     # 例：网盘侧 /115open/9KG/STRM 而元数据侧只有 /STRM，
     #     则设 "META_SUBDIR_OVERRIDE": "/STRM"
     "META_SUBDIR_OVERRIDE": "",
+    # 空间猎犬的「内容后缀白名单」：
+    # 目录里只要存在这些后缀的文件，就认为目录有内容、不算空壳。
+    # 空列表时回退到 DEFAULT_HOUND_CONTENT_EXTS。
+    "HOUND_CONTENT_EXTS": [],
 }
+
+# 空间猎犬默认的内容后缀：含 .strm 与常见视频格式。
+# 目的：避免把「含真实视频但还没有 .strm」的目录误判为空壳并删除。
+DEFAULT_HOUND_CONTENT_EXTS = [
+    ".strm",
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".wmv",
+    ".mov",
+    ".ts",
+    ".m2ts",
+    ".rmvb",
+    ".flv",
+    ".iso",
+    ".mpg",
+    ".mpeg",
+    ".m4v",
+    ".webm",
+    ".vob",
+    ".asf",
+    ".3gp",
+]
 
 # ---------------------------------------------------------------------------
 # 洗板权重档位
@@ -265,6 +293,9 @@ def normalize_config(cfg: dict) -> dict:
     out["WEIGHT_CUSTOM"] = normalize_weight_custom(out.get("WEIGHT_CUSTOM"))
     out["WEIGHT_ORDER"] = normalize_weight_order(out.get("WEIGHT_ORDER"), out["WEIGHT_CUSTOM"])
 
+    # 猎犬内容后缀：统一为小写带点的形式；空列表表示使用默认值
+    out["HOUND_CONTENT_EXTS"] = normalize_ext_list(out.get("HOUND_CONTENT_EXTS"))
+
     mount = _norm_slash(out.get("MOUNT_BASE_PATH") or "")
     raw_dirs = out.get("WATCHED_DIRS") or []
     if isinstance(raw_dirs, str):
@@ -452,6 +483,52 @@ def default_meta_scan_paths() -> list[str]:
         if p and p not in out:
             out.append(p)
     return out
+
+
+def normalize_ext_list(raw) -> list[str]:
+    """把后缀列表规范化为「小写、带点、去重」的形式。
+
+    接受 ``strm`` / ``.strm`` / ``STRM`` / ``.STRM`` 等写法，
+    统一输出 ``.strm``；忽略空项与非字母数字项。
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        items = raw.replace("，", ",").replace("\n", ",").replace(" ", ",").split(",")
+    elif isinstance(raw, (list, tuple)):
+        items = []
+        for it in raw:
+            if isinstance(it, str):
+                items.extend(it.replace("，", ",").replace("\n", ",").replace(" ", ",").split(","))
+            else:
+                items.append(it)
+    else:
+        return []
+
+    out, seen = [], set()
+    for it in items:
+        s = str(it or "").strip().lower()
+        if not s:
+            continue
+        if not s.startswith("."):
+            s = "." + s
+        # 只保留「点 + 字母数字」，防止把奇怪字符写进来
+        if not re.match(r"^\.[a-z0-9]{1,10}$", s):
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def hound_content_exts() -> list[str]:
+    """空间猎犬判定「目录有内容」的后缀白名单。
+
+    未配置时回退到 DEFAULT_HOUND_CONTENT_EXTS。
+    """
+    exts = normalize_ext_list(current_config().get("HOUND_CONTENT_EXTS"))
+    return exts or list(DEFAULT_HOUND_CONTENT_EXTS)
 
 
 # ---------------------------------------------------------------------------

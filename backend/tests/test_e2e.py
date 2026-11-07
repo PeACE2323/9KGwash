@@ -55,9 +55,32 @@ with open(os.path.join(CONFIG_DIR, "config.json"), "w", encoding="utf-8") as f:
 from app import config as cfg  # noqa: E402
 from app.factory import create_app  # noqa: E402
 from app.services import fanhao as fh  # noqa: E402
+from app.services import webhooks  # noqa: E402
 
 app = create_app()
 client = app.test_client()
+
+
+def wait_pending(timeout=30.0):
+    """等待 webhook 后台线程池清空（洗板是异步执行的）。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if webhooks.pending_count() == 0:
+                # 再给一点余量，确保文件系统操作已落盘
+                time.sleep(0.05)
+                if webhooks.pending_count() == 0:
+                    return
+        except Exception:  # noqa: BLE001
+            return
+        time.sleep(0.02)
+
+
+def post_webhook(json=None, **kwargs):
+    """POST /webhook 并等待后台处理完成，便于同步断言。"""
+    r = client.post("/webhook", json=json, **kwargs)
+    wait_pending()
+    return r
 
 # 走接口热更新出一个「干净」基线（DRY_RUN=False、去前缀开启、Webhook 置空），
 # 避免本地联调时残留的 config.json 影响判定
@@ -167,8 +190,7 @@ reset_state()
 mk_mount("ABF-391-C", ["ABF-391-C.mp4"])
 mk_mount("ABF-391", ["ABF-391.mp4"])
 meta_loser = mk_meta("ABF-391", ["ABF-391.nfo", "ABF-391.json", "poster.jpg"])
-r = client.post(
-    "/webhook",
+r = post_webhook(
     json={"data": [{"action": "create", "is_dir": "false",
                     "destination_file": "/115open/9KG/STRM/ABF-391-C/ABF-391-C.mp4"}]},
 )
@@ -192,7 +214,7 @@ reset_state()
 mk_mount("MNO-500", ["MNO-500.mp4"])
 mk_mount("MNO-500-C", ["MNO-500-C.mp4"])
 mk_meta("MNO-500", ["MNO-500.nfo"])          # 丢家元数据目录里只有同名 nfo -> 应被连带删除并回收
-client.post("/webhook", json={"data": [{"action": "create", "is_dir": "false",
+post_webhook( json={"data": [{"action": "create", "is_dir": "false",
             "destination_file": "/115open/9KG/STRM/MNO-500-C/MNO-500-C.mp4"}]})
 check("低优画质：王者保留", os.path.exists(os.path.join(MOUNT, STRM, "MNO-500-C", "MNO-500-C.mp4")))
 check("低优画质：输家视频删除", not os.path.exists(os.path.join(MOUNT, STRM, "MNO-500", "MNO-500.mp4")))
@@ -231,7 +253,7 @@ reset_state()
 mk_mount("PQR-700", ["PQR-700-CD1.mp4", "PQR-700-CD2.mp4"])
 mk_mount("PQR-700-C", ["PQR-700-C.mp4"])
 mk_meta("PQR-700", ["PQR-700-CD1.nfo"])
-client.post("/webhook", json={"data": [{"action": "create", "is_dir": "false",
+post_webhook( json={"data": [{"action": "create", "is_dir": "false",
             "destination_file": "/115open/9KG/STRM/PQR-700-C/PQR-700-C.mp4"}]})
 check("碎片：王者保留", os.path.exists(os.path.join(MOUNT, STRM, "PQR-700-C", "PQR-700-C.mp4")))
 check("碎片：CD1 被删", not os.path.exists(os.path.join(MOUNT, STRM, "PQR-700", "PQR-700-CD1.mp4")))
@@ -242,7 +264,7 @@ set_mode(dry_run=True)
 reset_state()
 mk_mount("XYZ-100-A", ["XYZ-100-A.mp4"])
 mk_mount("XYZ-100-B", ["XYZ-100-B.mp4"])
-client.post("/webhook", json={"data": [{"action": "create", "is_dir": "false",
+post_webhook( json={"data": [{"action": "create", "is_dir": "false",
             "destination_file": "/115open/9KG/STRM/XYZ-100-A/XYZ-100-A.mp4"}]})
 check("Dry Run 保留 A", os.path.exists(os.path.join(MOUNT, STRM, "XYZ-100-A", "XYZ-100-A.mp4")))
 check("Dry Run 保留 B", os.path.exists(os.path.join(MOUNT, STRM, "XYZ-100-B", "XYZ-100-B.mp4")))
@@ -251,7 +273,7 @@ print("\n--- B4. 非 JAV 番号跳过 ---")
 set_mode(dry_run=False)
 reset_state()
 mk_mount("Some.Movie.2024", ["Some.Movie.2024.mp4"])
-r = client.post("/webhook", json={"data": [{"action": "create", "is_dir": "false",
+r = post_webhook( json={"data": [{"action": "create", "is_dir": "false",
                 "destination_file": "/115open/9KG/STRM/Some.Movie.2024/Some.Movie.2024.mp4"}]})
 check("非监听前缀目录不触发（返回 OK）", r.status_code == 200)
 check("文件未被动", os.path.exists(os.path.join(MOUNT, STRM, "Some.Movie.2024", "Some.Movie.2024.mp4")))
@@ -506,7 +528,7 @@ reset_state()
 orig_sleep = time.sleep
 time.sleep = lambda *_a, **_k: None
 try:
-    r = client.post("/webhook", json={"data": [{"action": "create", "is_dir": "false",
+    r = post_webhook( json={"data": [{"action": "create", "is_dir": "false",
                     "destination_file": "/115open/9KG/STRM/NOPE-000/NOPE-000.mp4"}]})
 finally:
     time.sleep = orig_sleep

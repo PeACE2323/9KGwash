@@ -319,6 +319,12 @@ def update_config():
                 payload[key] = vals
                 path_changes[key] = vals
 
+        # ---- 空间猎犬的内容后缀白名单（空数组 = 使用默认值）----
+        if "HOUND_CONTENT_EXTS" in data:
+            exts = config.normalize_ext_list(data.get("HOUND_CONTENT_EXTS"))
+            payload["HOUND_CONTENT_EXTS"] = exts
+            path_changes["HOUND_CONTENT_EXTS"] = exts
+
         # ---- 元数据子路径覆盖（网盘侧与元数据侧层级不一致时用）----
         if "META_SUBDIR_OVERRIDE" in data:
             v = _norm_cfg_path(data.get("META_SUBDIR_OVERRIDE"))
@@ -552,9 +558,28 @@ def api_scan_empty():
 
 @bp.route("/api/delete_empty_folders", methods=["POST"])
 def api_delete_empty():
+    """删除空壳目录。
+
+    请求体（兼容旧调用）：
+        folders       本地目录字符串数组（旧形式，仅删本地）
+        items         扫描返回的 items（推荐，含网盘映射信息）
+        include_mount 是否同时删除对应的网盘空目录（「两边都删」）
+    """
     data = request.get_json(silent=True) or {}
     folders = data.get("folders", [])
-    return jsonify(library.delete_empty_folders(folders))
+    items = data.get("items")
+    include_mount = bool(data.get("include_mount"))
+
+    if items is not None and not isinstance(items, list):
+        items = None
+
+    return jsonify(
+        library.delete_empty_folders(
+            folders if isinstance(folders, list) else [],
+            include_mount=include_mount,
+            items=items,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -594,6 +619,9 @@ def api_status():
             "dedup_scan_paths": config.dedup_scan_paths(),
             "default_scan_paths": config.default_meta_scan_paths(),
             "meta_subdir_override": cfg.get("META_SUBDIR_OVERRIDE") or "",
+            # 空间猎犬的内容后缀白名单（生效值 + 默认值，供界面「恢复默认」用）
+            "hound_content_exts": config.hound_content_exts(),
+            "default_hound_content_exts": list(config.DEFAULT_HOUND_CONTENT_EXTS),
         }
     )
 
@@ -627,9 +655,15 @@ def healthz():
 # ---------------------------------------------------------------------------
 @bp.route("/webhook", methods=["POST"])
 def handle_cd2_webhook():
+    """CD2 新增文件通知。
+
+    立即返回 200，真正的等待与洗板在后台线程池执行。
+    否则单个请求最长会占用线程 80 秒（60s 等待 + 20s 分盘缓冲），
+    几个并发就能把 gunicorn 线程池占满、导致 Web UI 无响应。
+    """
     try:
         payload = request.get_json(silent=True)
-        webhooks.handle_cd2(payload)
+        webhooks.enqueue_cd2(payload)
         return "OK", 200
     except Exception as e:  # noqa: BLE001
         logger.error(f"处理 Webhook 报错: {str(e)}")

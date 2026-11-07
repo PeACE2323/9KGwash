@@ -26,6 +26,8 @@
     logQuery: "", // 日志搜索关键字
     logFollow: true, // 是否自动跟随最新日志
     emptyFolders: [],
+    houndItems: [], // 猎犬扫描详情（含网盘映射状态）
+    houndExts: [], // 猎犬内容后缀白名单
     duplicates: [],
     busy: false,
     loaded: { overview: false, hound: false, dedup: false, deliver: false },
@@ -183,6 +185,10 @@
       loadStatus();
     }
     if (name === "hound" || name === "dedup") loadScanPaths(name);
+    if (name === "hound") {
+      initHoundExts();
+      ensureHoundExts();
+    }
   }
 
   /* ----------------------------- 主题切换 ----------------------------- */
@@ -1871,25 +1877,142 @@
   }
 
   /* ----------------------------- 空间猎犬 ----------------------------- */
-  function renderEmptyFolders(folders) {
-    state.emptyFolders = folders.slice();
-    const box = $("hound-results");
-    $("hound-count").textContent = folders.length ? `共 ${folders.length} 个` : "";
-    if (!folders.length) {
-      box.innerHTML = '<div class="empty-hint">✅ 完美！未发现任何本地无 STRM 的空壳目录。</div>';
-      $("hound-actions").hidden = true;
+  /* ----------------------------- 空间猎犬 ----------------------------- */
+  const HOUND_BADGE = {
+    empty: ["网盘也为空", "shell-ok"],
+    missing: ["网盘已不存在", "shell-ok"],
+    has_video: ["网盘仍有视频", "shell-bad"],
+    unknown: ["网盘状态未知", "shell-warn"],
+    unmapped: ["无法映射网盘", "shell-dim"],
+  };
+
+  /** 后缀归一化：补点、转小写、校验合法性 */
+  function normExt(raw) {
+    let s = String(raw || "").trim().toLowerCase();
+    if (!s) return "";
+    if (!s.startsWith(".")) s = "." + s;
+    return /^\.[a-z0-9]{1,10}$/.test(s) ? s : "";
+  }
+
+  let houndExtInput = null;
+
+  /** 初始化内容后缀标签输入（改动即保存） */
+  function initHoundExts() {
+    const host = $("hound-exts-list");
+    if (!host || houndExtInput) return;
+    houndExtInput = createKeywordInput(host, state.houndExts || []);
+    houndExtInput.onChange(() => {
+      const exts = houndExtInput.get().map(normExt).filter(Boolean);
+      saveHoundExts(exts);
+    });
+  }
+
+  /** 从 /api/status 拉取后缀并回填（没有 status 时先拉一次） */
+  function ensureHoundExts() {
+    const st = state.lastStatus;
+    if (st && st.hound_content_exts) {
+      state.houndExts = st.hound_content_exts.slice();
+      renderHoundExts(state.houndExts);
       return;
     }
-    box.innerHTML = folders
-      .map(
-        (f) =>
-          '<div class="shell-item"><span class="path" title="' +
-          escapeHtml(f) +
+    api("/api/status")
+      .then((s) => {
+        if (s && s.success) {
+          state.lastStatus = s;
+          state.houndExts = (s.hound_content_exts || []).slice();
+          renderHoundExts(state.houndExts);
+        }
+      })
+      .catch(() => {});
+  }
+
+  function renderHoundExts(exts) {
+    if (!houndExtInput) return;
+    houndExtInput.set(exts || []);
+    const hint = $("hound-exts-hint");
+    if (hint) {
+      hint.textContent = exts && exts.length
+        ? `共 ${exts.length} 个后缀；目录内存在任一后缀的文件即视为「有内容」`
+        : "未设置，将使用默认后缀（.strm + 常见视频格式）";
+      hint.className = "field-hint";
+    }
+  }
+
+  async function saveHoundExts(exts) {
+    try {
+      const res = await apiPost("/api/config", { HOUND_CONTENT_EXTS: exts });
+      if (res.success) {
+        toast(exts.length ? "内容后缀已保存" : "内容后缀已清空，将使用默认值");
+        renderHoundExts(exts);
+        loadStatus();
+      } else {
+        toast("保存失败：" + (res.error || "未知错误"));
+      }
+    } catch (e) {
+      toast("保存失败：" + e.message);
+    }
+  }
+
+  function renderEmptyFolders(items, summary) {
+    // 兼容旧格式（纯字符串数组）
+    const list = (items || []).map((it) =>
+      typeof it === "string"
+        ? { local: it, mount: null, mapped: false, mount_state: "unmapped", mount_video_count: 0 }
+        : it
+    );
+    state.houndItems = list;
+    state.emptyFolders = list.map((i) => i.local);
+
+    const box = $("hound-results");
+    const countEl = $("hound-count");
+
+    if (!list.length) {
+      box.innerHTML = '<div class="empty-hint">✅ 完美！未发现任何空壳目录。</div>';
+      $("hound-actions").hidden = true;
+      if (countEl) countEl.textContent = "";
+      return;
+    }
+
+    const s = summary || {};
+    const parts = [`共 ${list.length} 个`];
+    if (s.both_empty) parts.push(`两边都空 ${s.both_empty}`);
+    if (s.mount_has_video) parts.push(`网盘有视频 ${s.mount_has_video}`);
+    if (s.unmapped) parts.push(`无法映射 ${s.unmapped}`);
+    if (countEl) countEl.textContent = parts.join(" · ");
+
+    box.innerHTML = list
+      .map((it) => {
+        const [text, cls] = HOUND_BADGE[it.mount_state] || HOUND_BADGE.unknown;
+        let badge = text;
+        if (it.mount_state === "has_video" && it.mount_video_count) {
+          badge = `网盘仍有 ${it.mount_video_count} 个视频`;
+        }
+        const mountLine = it.mount ? "网盘: " + it.mount : "网盘: 无法映射到对应目录";
+        return (
+          '<div class="shell-item">' +
+          '<span class="shell-mark">🗑️</span>' +
+          '<span class="shell-info">' +
+          '<span class="path" title="' +
+          escapeHtml(it.local) +
           '">' +
-          escapeHtml(f) +
-          "</span></div>"
-      )
+          escapeHtml(it.local) +
+          "</span>" +
+          '<span class="shell-mount" title="' +
+          escapeHtml(mountLine) +
+          '">' +
+          escapeHtml(mountLine) +
+          "</span>" +
+          "</span>" +
+          '<span class="shell-badge ' +
+          cls +
+          '">' +
+          escapeHtml(badge) +
+          "</span>" +
+          "</div>"
+        );
+      })
       .join("");
+
     $("hound-actions").hidden = false;
   }
 
@@ -1906,7 +2029,7 @@
         toast("扫描失败: " + (data.error || "未知错误"));
         return;
       }
-      renderEmptyFolders(data.empty_meta || []);
+      renderEmptyFolders(data.items || data.empty_meta || [], data.summary || {});
       toast("扫描完成，详见活动日志");
     } catch (e) {
       toast("扫描请求失败，请检查后端状态");
@@ -1917,26 +2040,56 @@
     }
   }
 
-  async function deleteEmptyFolders() {
-    if (!state.emptyFolders.length) return;
-    const ok = await confirmDialog(
-      "⚠️ 高风险操作",
-      `即将永久物理删除列表中的 ${state.emptyFolders.length} 个本地空壳文件夹。\n操作不可逆，确定执行吗？`,
-      "确认删除全部"
-    );
+  async function deleteEmptyFolders(includeMount) {
+    const items = state.houndItems || [];
+    if (!items.length) return;
+
+    let targets = items;
+    let title;
+    let body;
+    let okLabel;
+
+    if (includeMount) {
+      targets = items.filter(
+        (i) => i.mapped && (i.mount_state === "empty" || i.mount_state === "missing")
+      );
+      const skipped = items.length - targets.length;
+      title = "⚠️ 两边都删";
+      body =
+        `即将删除 ${targets.length} 个「网盘侧也为空」的目录（本地 + 网盘）。\n` +
+        (skipped > 0 ? `其余 ${skipped} 个因「网盘仍有内容」或「无法映射」将被跳过。\n` : "") +
+        `操作不可逆，确定执行吗？`;
+      okLabel = "确认两边都删";
+    } else {
+      title = "⚠️ 删除本地目录";
+      body =
+        `即将永久物理删除列表中的 ${items.length} 个本地空壳文件夹（不动网盘）。\n` +
+        `操作不可逆，确定执行吗？`;
+      okLabel = "确认删除本地";
+    }
+
+    if (!targets.length) {
+      toast("没有「两边都空」的条目可删除");
+      return;
+    }
+
+    const ok = await confirmDialog(title, body, okLabel);
     if (!ok) return;
 
-    const btn = $("hound-del-btn");
+    const btn = $(includeMount ? "hound-del-both-btn" : "hound-del-btn");
+    const label = btn.textContent;
     btn.disabled = true;
-    btn.textContent = "🗑️ 正在清除...";
+    btn.textContent = "⏳ 正在删除...";
     try {
       const data = await api("/api/delete_empty_folders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folders: state.emptyFolders }),
+        body: JSON.stringify({ items: targets, include_mount: includeMount }),
       });
       if (data.success) {
-        toast(`清理完成：删除 ${data.deleted} 个，跳过 ${data.failed} 个`);
+        const bits = [`本地 ${data.deleted} 个`];
+        if (includeMount) bits.push(`网盘 ${data.mount_deleted} 个`);
+        toast(`删除完成：${bits.join("，")}`);
         cancelHound();
       } else {
         toast("删除过程异常，请查看日志");
@@ -1945,12 +2098,13 @@
       toast("网络请求失败");
     } finally {
       btn.disabled = false;
-      btn.textContent = "🗑️ 确认删除全部";
+      btn.textContent = label;
     }
   }
 
   function cancelHound() {
     state.emptyFolders = [];
+    state.houndItems = [];
     $("hound-results").innerHTML =
       '<div class="empty-hint">暂无空壳扫描数据<br><small>点击右上角「开始扫描」</small></div>';
     $("hound-actions").hidden = true;
@@ -2143,7 +2297,13 @@
     $("menu-btn").addEventListener("click", openDrawer);
 
     $("hound-scan-btn").addEventListener("click", scanEmptyFolders);
-    $("hound-del-btn").addEventListener("click", deleteEmptyFolders);
+    $("hound-del-btn").addEventListener("click", () => deleteEmptyFolders(false));
+    $("hound-del-both-btn").addEventListener("click", () => deleteEmptyFolders(true));
+    $("hound-exts-reset").addEventListener("click", () => {
+      const defs = (state.lastStatus && state.lastStatus.default_hound_content_exts) || [];
+      renderHoundExts(defs);
+      saveHoundExts(defs);
+    });
     $("hound-cancel-btn").addEventListener("click", cancelHound);
 
     // 猎犬/查重的扫描路径：列表式增删 + 保存

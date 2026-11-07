@@ -90,32 +90,99 @@ def fast_check_folder_exists(base_path: str, keyword: str, max_depth: int = 3) -
 
 
 def meta_to_mount_dir(meta_dir: str):
-    """根据本地元数据目录推导对应的网盘挂载目录，支持自适应容错。"""
-    meta_base = config.metadata_base_path().rstrip("/")
-    mount_base = config.mount_base_path()
-    if not meta_dir or not meta_dir.startswith(meta_base):
+    """根据本地元数据目录推导对应的网盘挂载目录。
+
+    **无法可靠映射时返回 None**，不再像旧实现那样静默返回一个
+    「网盘根 + 相对路径」的错误路径。
+
+    原因：调用方会拿这个结果去删网盘目录（查重洗板）或判断网盘是否为空
+    （空间猎犬）。若静默给出错误路径，可能导致：
+      - 删除错误的网盘目录；
+      - 把「网盘侧还有文件」误判成「网盘侧为空」，进而误删本地。
+
+    映射可靠的判定：该目录必须落在某个「监听目录对应的元数据子路径」之下。
+    推导链条与 config.meta_subdir_for / mount_path_for 保持完全一致，
+    保证「本地路径 <-> 网盘路径」双向自洽。
+    """
+    if not meta_dir:
         return None
-    rel = os.path.relpath(meta_dir, meta_base)
+
+    meta_base = _norm(config.metadata_base_path()).rstrip("/")
+    p = _norm(meta_dir)
+    if not p or p == meta_base or not p.startswith(meta_base + "/"):
+        return None
+
+    rel = p[len(meta_base):].lstrip("/")
+    if not rel:
+        return None
+
     for w in config.watched_dirs():
-        w_meta_sub = config.meta_subdir_for(w, meta_base).strip("/")
-        if rel == w_meta_sub or rel.startswith(w_meta_sub + os.sep) or rel.startswith(w_meta_sub + "/"):
-            w_mount_sub = w.strip("/")
-            mount_rel = rel.replace(w_meta_sub, w_mount_sub, 1)
-            mount_path = os.path.join(mount_base, mount_rel)
-            if os.path.exists(mount_path):
-                return mount_path
-            # 兼容大小写或网盘端轻微命名差异
-            parent_mount = os.path.dirname(mount_path)
-            if os.path.exists(parent_mount):
-                target_name = os.path.basename(meta_dir).upper()
-                try:
-                    for entry in os.scandir(parent_mount):
-                        if entry.is_dir() and entry.name.upper() == target_name:
-                            return entry.path
-                except Exception:  # noqa: BLE001
-                    pass
-            return mount_path
-    return os.path.join(mount_base, rel)
+        w_meta_sub = _norm(config.meta_subdir_for(w, meta_base)).strip("/")
+        if not w_meta_sub:
+            continue
+        if not (rel == w_meta_sub or rel.startswith(w_meta_sub + "/")):
+            continue
+
+        tail = rel[len(w_meta_sub):].lstrip("/")
+        mount_root = _norm(config.mount_path_for(w)).rstrip("/")
+        if not mount_root:
+            continue
+
+        cand = mount_root + ("/" + tail if tail else "")
+
+        # 优先返回真实存在的路径（兼容网盘端大小写差异）
+        if os.path.isdir(cand):
+            return cand
+        parent = os.path.dirname(cand)
+        if os.path.isdir(parent):
+            target = os.path.basename(cand).upper()
+            try:
+                for entry in os.scandir(parent):
+                    if entry.is_dir() and entry.name.upper() == target:
+                        return entry.path
+            except OSError:
+                pass
+        # 目录可能已被删除，但映射关系本身是确定的，仍然返回路径
+        return cand
+
+    # 没有任何监听目录能解释这个本地路径 -> 无法映射
+    return None
+
+
+def count_files_by_ext(dir_path: str, exts, recursive: bool = True) -> int:
+    """统计目录下（可递归）匹配指定后缀的文件数量。
+
+    用于判断网盘目录「是否为空」。
+    目录不存在时返回 0；读取异常也按 0 处理（调用方据此决定是否删除，
+    因此这里宁可保守：异常时返回 -1 表示「无法确认」）。
+    """
+    ext_set = {str(e).lower() for e in (exts or []) if str(e).strip()}
+    if not os.path.isdir(dir_path):
+        return 0
+    if not ext_set:
+        return -1
+
+    count = 0
+    try:
+        if recursive:
+            for root, _dirs, files in os.walk(dir_path):
+                for fn in files:
+                    if os.path.splitext(fn)[1].lower() in ext_set:
+                        count += 1
+                # 已经找到内容就不必继续遍历
+                if count:
+                    return count
+        else:
+            with os.scandir(dir_path) as it:
+                for entry in it:
+                    try:
+                        if entry.is_file() and os.path.splitext(entry.name)[1].lower() in ext_set:
+                            count += 1
+                    except OSError:
+                        continue
+    except OSError:
+        return -1
+    return count
 
 
 def meta_dir_of(dir_path: str) -> str:

@@ -29,12 +29,27 @@ def load_wash_history() -> dict:
 
 
 def save_wash_history(history: dict) -> None:
+    """保存洗板档案（原子写入）。
+
+    档案是 Emby 幽灵删除防御的唯一依据：如果文件写坏，
+    重启后防御失效，Emby 的延迟删除通知会被当成用户真删而转发给 CMS，
+    可能引发整片误删。因此这里用「临时文件 + fsync + 原子替换」，
+    保证任何时刻磁盘上的文件都是完整可解析的。
+    """
+    tmp_path = config.WASH_HISTORY_FILE + ".tmp"
     try:
         os.makedirs(os.path.dirname(config.WASH_HISTORY_FILE), exist_ok=True)
-        with open(config.WASH_HISTORY_FILE, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=4)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, config.WASH_HISTORY_FILE)
     except Exception:  # noqa: BLE001
-        pass
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 def record(keys) -> None:
