@@ -186,6 +186,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_hound_cloud
 
+      - name: 运行自动洗板开关测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_wash_switch
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

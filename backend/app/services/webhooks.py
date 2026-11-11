@@ -147,6 +147,16 @@ def handle_cd2(payload) -> None:
             local_file_path = config.mount_path_for(hit_dir) + tail
             basename = os.path.basename(local_file_path)
 
+            # 自动洗板总开关：关闭时不等待挂载、不洗板、不删任何文件，
+            # 但仍然记录日志，方便确认「通知收到了，只是按设置跳过」。
+            # 查重页的「一键洗板清理」是手动操作，不走这里，不受影响。
+            if not config.get_wash_enabled():
+                logger.info(
+                    f"⏸️ [洗板已关闭] 收到新文件通知 [{basename}]，"
+                    f"按「自动洗板」开关设置跳过，未做任何改动。"
+                )
+                continue
+
             logger.info(f"🚀 [通关] 新增目标视频 [{basename}]，开始智能等待挂载同步...")
 
             waited = 0

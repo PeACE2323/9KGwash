@@ -95,7 +95,7 @@
             <div class="card stat">
               <div class="stat-label">运行模式</div>
               <div class="stat-value" id="stat-mode">-</div>
-              <div class="stat-hint">网页可随时热切换</div>
+              <div class="stat-hint" id="stat-mode-hint">网页可随时热切换</div>
             </div>
             <div class="card stat">
               <div class="stat-label">监听目录</div>
@@ -347,7 +347,18 @@
                 <input type="text" id="strm_webhook" value="{{ strm_webhook }}" placeholder="http://192.168.x.x:port/api/trigger">
               </label>
               <label class="field">
-                <span>运行模式 (洗板开关)</span>
+                <span>自动洗板总开关</span>
+                <select id="wash_enabled">
+                  <option value="true" {% if wash_enabled %}selected{% endif %}>✅ 开启 (CD2 推送新文件后自动触发洗板对决)</option>
+                  <option value="false" {% if not wash_enabled %}selected{% endif %}>⏸️ 关闭 (只接收通知并记日志，不洗板、不删任何文件)</option>
+                </select>
+                <small class="field-hint">
+                  关闭后仅停用 <strong>CD2 自动触发</strong>的洗板；「影片查重」页的
+                  <strong>一键洗板清理</strong>仍可手动执行。
+                </small>
+              </label>
+              <label class="field">
+                <span>运行模式 (DRY RUN / 实弹)</span>
                 <select id="dry_run">
                   <option value="true" {% if dry_run %}selected{% endif %}>🟡 DRY RUN (仅日志模拟，不真删文件)</option>
                   <option value="false" {% if not dry_run %}selected{% endif %}>🔴 实弹武装 (删除文件与元数据)</option>

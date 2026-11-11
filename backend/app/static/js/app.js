@@ -1638,6 +1638,15 @@
 
       setStat("stat-mode", st.dry_run ? "DRY RUN" : "实弹武装", st.dry_run ? "warn" : "bad");
 
+      // 自动洗板总开关状态（与运行模式分开显示，避免混淆）
+      const modeHint = $("stat-mode-hint");
+      if (modeHint) {
+        const off = st.wash_enabled === false;
+        modeHint.textContent = off
+          ? "⏸️ 自动洗板已关闭（不触发对决）"
+          : "自动洗板开启（CD2 推送后自动对决）";
+      }
+
       const watched = st.watched || [];
       setStat("stat-watched", watched.length ? watched.length + " 个" : "未配置",
         watched.length ? "" : "bad");
@@ -2258,6 +2267,7 @@
     const payload = {
       DB_ONLINE_WEBHOOK: $("db_webhook").value.trim(),
       STRM_WEBHOOK: $("strm_webhook").value.trim(),
+      WASH_ENABLED: $("wash_enabled").value === "true",
       DRY_RUN: $("dry_run").value === "true",
       IGNORE_LEADING_DIGITS: $("ignore_digits").value === "true",
     };

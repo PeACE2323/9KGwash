@@ -45,6 +45,7 @@ def dashboard():
         db_webhook=config.get_db_webhook(),
         strm_webhook=config.get_strm_webhook(),
         dry_run=config.get_dry_run(),
+        wash_enabled=config.get_wash_enabled(),
         ignore_digits=config.get_ignore_leading_digits(),
         cfg=config.current_config(),
     )
@@ -276,6 +277,9 @@ def update_config():
             payload["DRY_RUN"] = bool(data.get("DRY_RUN"))
         if "IGNORE_LEADING_DIGITS" in data:
             payload["IGNORE_LEADING_DIGITS"] = bool(data.get("IGNORE_LEADING_DIGITS"))
+        # 自动洗板总开关（只影响 CD2 推送触发的洗板，不影响手动查重洗板）
+        if "WASH_ENABLED" in data:
+            payload["WASH_ENABLED"] = bool(data.get("WASH_ENABLED"))
 
         # ---- 路径三项（可选，做了规范化与基本校验）----
         path_changes = {}
@@ -336,7 +340,13 @@ def update_config():
         if success:
             # 只把本次真实提交的字段应用到运行期，未提交的保持不变
             runtime_updates = {}
-            for key in ("DB_ONLINE_WEBHOOK", "STRM_WEBHOOK", "DRY_RUN", "IGNORE_LEADING_DIGITS"):
+            for key in (
+                "DB_ONLINE_WEBHOOK",
+                "STRM_WEBHOOK",
+                "DRY_RUN",
+                "IGNORE_LEADING_DIGITS",
+                "WASH_ENABLED",
+            ):
                 if key in payload:
                     runtime_updates[key] = payload[key]
             # 路径变更立即生效：写入运行时，让所有推导函数立刻用新值
@@ -607,7 +617,9 @@ def api_status():
             "success": True,
             "version": __version__,
             "version_full": version_full(),
-            "dry_run": config.get_dry_run(),            "ignore_leading_digits": config.get_ignore_leading_digits(),
+            "dry_run": config.get_dry_run(),
+            "wash_enabled": config.get_wash_enabled(),
+            "ignore_leading_digits": config.get_ignore_leading_digits(),
             "db_webhook": config.get_db_webhook(),
             "strm_webhook": config.get_strm_webhook(),
             "mount_base_path": cfg.get("MOUNT_BASE_PATH"),

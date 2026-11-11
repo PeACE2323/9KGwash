@@ -31,6 +31,11 @@ DEFAULT_CONFIG = {
     "DB_ONLINE_WEBHOOK": "",
     "STRM_WEBHOOK": "",
     "IGNORE_LEADING_DIGITS": True,
+    # 自动洗板总开关：
+    #   True  = 正常：CD2 推送新文件后自动触发洗板对决
+    #   False = 关闭：CD2 推送仍然接收并记录日志，但不执行洗板（不删任何文件）
+    # 注意：查重页的「一键洗板清理」是手动操作，不受此开关影响。
+    "WASH_ENABLED": True,
     # 洗板权重档位顺序（高 -> 低），可在前端拖动调整
     # 可包含内置档位（UC / C / U / NORMAL）与自定义档位（custom:<id>）
     "WEIGHT_ORDER": ["UC", "C", "U", "NORMAL"],
@@ -107,6 +112,8 @@ _runtime = {
     "DB_ONLINE_WEBHOOK": DEFAULT_CONFIG["DB_ONLINE_WEBHOOK"],
     "STRM_WEBHOOK": DEFAULT_CONFIG["STRM_WEBHOOK"],
     "IGNORE_LEADING_DIGITS": DEFAULT_CONFIG["IGNORE_LEADING_DIGITS"],
+    # 自动洗板总开关：关闭后 CD2 推送不再触发洗板（手动查重洗板不受影响）
+    "WASH_ENABLED": DEFAULT_CONFIG["WASH_ENABLED"],
     # 档位 -> 权重 的映射（数字越大越优先）
     "WEIGHT_MAP": {},
 }
@@ -227,6 +234,8 @@ def _apply_runtime(conf: dict) -> None:
     _runtime["DB_ONLINE_WEBHOOK"] = conf.get("DB_ONLINE_WEBHOOK", "") or ""
     _runtime["STRM_WEBHOOK"] = conf.get("STRM_WEBHOOK", "") or ""
     _runtime["IGNORE_LEADING_DIGITS"] = bool(conf.get("IGNORE_LEADING_DIGITS", True))
+    # 缺省视为开启：老配置文件里没有这个键时，升级后洗板照常工作
+    _runtime["WASH_ENABLED"] = bool(conf.get("WASH_ENABLED", True))
 
     custom = conf.get("WEIGHT_CUSTOM")
     if not isinstance(custom, list):
@@ -415,6 +424,14 @@ def current_config() -> dict:
 # --- 运行期参数访问器（与原脚本全局变量一一对应） ---
 def get_dry_run() -> bool:
     return _runtime["DRY_RUN"]
+
+
+def get_wash_enabled() -> bool:
+    """自动洗板总开关。False 时 CD2 推送不再触发洗板。
+
+    默认 True（保持与历史行为一致：升级后不会悄悄关掉洗板）。
+    """
+    return bool(_runtime.get("WASH_ENABLED", True))
 
 
 def get_db_webhook() -> str:
