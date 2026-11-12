@@ -242,6 +242,46 @@ def normalize_weight_custom(raw) -> list[dict]:
     return out
 
 
+def _dedupe_tags_by_name(tags: list[dict]) -> tuple[list[dict], dict]:
+    """按标签名合并重复项，返回 (去重后的标签, 旧 id -> 新 id 映射)。
+
+    场景：用户以前自建过「LTX」档位，迁移时会再生成一个同名标签，
+    界面上就出现两个 LTX。这里按名字合并，把关键字并入第一个同名标签，
+    并给出 id 映射，供组合里的引用改指到保留下来的那个标签。
+    """
+    out: list[dict] = []
+    by_name: dict[str, dict] = {}
+    id_map: dict[str, str] = {}
+
+    for t in tags:
+        key = str(t.get("name") or "").strip().lower()
+        tid = str(t.get("id") or "")
+        if not key:
+            continue
+
+        keep = by_name.get(key)
+        if keep is None:
+            by_name[key] = t
+            out.append(t)
+            continue
+
+        # 同名：关键字并入，正则补空，id 指向保留者
+        merged = list(keep.get("keywords") or [])
+        seen = {str(x).lower() for x in merged}
+        for k in t.get("keywords") or []:
+            kk = str(k).strip()
+            if kk and kk.lower() not in seen:
+                merged.append(kk)
+                seen.add(kk.lower())
+        keep["keywords"] = merged
+        if not keep.get("regex") and t.get("regex"):
+            keep["regex"] = t["regex"]
+        if tid and tid != keep.get("id"):
+            id_map[tid.lower()] = str(keep.get("id") or "")
+
+    return out, id_map
+
+
 def normalize_weight_tags(raw) -> list[dict]:
     """规范化「版本标签」定义。
 
@@ -442,22 +482,45 @@ def _migrate_custom_to_combos(
         内置 C       -> 组合 [字幕]
         内置 U       -> 组合 [破解]
         内置 NORMAL  -> 组合 [普通]
-        custom:<id>  -> 新标签 c_<id>（沿用原关键字），组合 [c_<id>]
+        custom:<id>  -> 标签（沿用原关键字），组合 [该标签]
+
+    **同名合并**：如果自定义档位的名字与内置标签重名（例如用户以前
+    自建过一个「LTX」档位），就把它的关键字并入同名内置标签，
+    而不是再新建一个同名标签 —— 否则界面上会出现两个「LTX」。
 
     由于每个自定义档位原本就是「任一关键字命中即算」，
     迁移成「只含一个标签的组合」后语义完全等价（单元素 AND = 原 OR 关键字）。
     顺序沿用原 WEIGHT_ORDER，因此权重数值与迁移前一致。
     """
     tags = [dict(t) for t in DEFAULT_WEIGHT_TAGS]
+    # 标签名（小写）-> 标签对象，用于同名合并
+    name_map = {str(t["name"]).strip().lower(): t for t in tags}
+    # "custom:<id>" -> 最终使用的标签 id
+    tier_tag: dict[str, str] = {}
+
     for c in custom:
-        tags.append(
-            {
-                "id": f"c_{c['id']}",
-                "name": c["name"],
-                "keywords": list(c.get("keywords") or []),
-                "regex": "",
-            }
-        )
+        name = str(c.get("name") or "").strip()
+        key = name.lower()
+        kws = [str(k).strip() for k in (c.get("keywords") or []) if str(k).strip()]
+
+        existing = name_map.get(key)
+        if existing is not None:
+            # 与内置标签同名 -> 关键字并入，不新建
+            merged = list(existing.get("keywords") or [])
+            seen = {str(x).lower() for x in merged}
+            for k in kws:
+                if k.lower() not in seen:
+                    merged.append(k)
+                    seen.add(k.lower())
+            existing["keywords"] = merged
+            tier_tag[f"{CUSTOM_TIER_PREFIX}{c['id']}"] = existing["id"]
+            continue
+
+        tid = f"c_{c['id']}"
+        tag = {"id": tid, "name": name, "keywords": kws, "regex": ""}
+        tags.append(tag)
+        name_map[key] = tag
+        tier_tag[f"{CUSTOM_TIER_PREFIX}{c['id']}"] = tid
 
     builtin_map = {
         "UC": ["sub", "crack"],
@@ -468,11 +531,15 @@ def _migrate_custom_to_combos(
 
     combos: list[dict] = []
     for tier in order:
-        if tier in builtin_map:
-            combos.append({"id": f"m_{tier.lower()}", "tags": list(builtin_map[tier])})
-        elif str(tier).lower().startswith(CUSTOM_TIER_PREFIX):
-            cid = str(tier)[len(CUSTOM_TIER_PREFIX):]
-            combos.append({"id": f"m_{cid}", "tags": [f"c_{cid}"]})
+        tier_s = str(tier)
+        if tier_s in builtin_map:
+            combos.append({"id": f"m_{tier_s.lower()}", "tags": list(builtin_map[tier_s])})
+        elif tier_s.lower().startswith(CUSTOM_TIER_PREFIX):
+            tid = tier_tag.get(tier_s) or tier_tag.get(tier_s.lower())
+            if tid:
+                combos.append(
+                    {"id": f"m_{tier_s[len(CUSTOM_TIER_PREFIX):]}", "tags": [tid]}
+                )
 
     return tags, combos or [{"id": "m_normal", "tags": ["normal"]}]
 
@@ -596,8 +663,33 @@ def normalize_config(cfg: dict) -> dict:
     out["WEIGHT_ORDER"] = normalize_weight_order(out.get("WEIGHT_ORDER"), out["WEIGHT_CUSTOM"])
 
     # 自由组合权重：标签与组合（组合顺序即优先级）
-    out["WEIGHT_TAGS"] = normalize_weight_tags(out.get("WEIGHT_TAGS"))
-    out["WEIGHT_COMBOS"] = normalize_weight_combos(out.get("WEIGHT_COMBOS"), out["WEIGHT_TAGS"])
+    raw_tags = out.get("WEIGHT_TAGS")
+    tags_norm = normalize_weight_tags(raw_tags)
+    # 同名标签合并（避免界面上出现两个「LTX」），并修正组合里的引用
+    tags_norm, tag_id_map = _dedupe_tags_by_name(tags_norm)
+    out["WEIGHT_TAGS"] = tags_norm
+
+    raw_combos = out.get("WEIGHT_COMBOS")
+    if tag_id_map and isinstance(raw_combos, list):
+        fixed: list = []
+        for c in raw_combos:
+            if not isinstance(c, dict):
+                fixed.append(c)
+                continue
+            cc = dict(c)
+            seen: set[str] = set()
+            new_tags: list[str] = []
+            for t in cc.get("tags") or []:
+                tid = str(t).strip().lower()
+                tid = tag_id_map.get(tid, tid)
+                if tid and tid not in seen:
+                    seen.add(tid)
+                    new_tags.append(tid)
+            cc["tags"] = new_tags
+            fixed.append(cc)
+        raw_combos = fixed
+
+    out["WEIGHT_COMBOS"] = normalize_weight_combos(raw_combos, out["WEIGHT_TAGS"])
 
     # 旧配置迁移：用户之前配过「自定义档位（关键字）」但还没配过「组合」时，
     # 自动把档位转成「标签 + 组合」，保证升级后洗板行为不变。

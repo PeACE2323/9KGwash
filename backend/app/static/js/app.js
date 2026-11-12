@@ -300,6 +300,21 @@
 
       label.appendChild(cb);
       label.appendChild(span);
+
+      // 自建标签可以删除（内置标签不可删）
+      if (t.is_custom) {
+        const del = document.createElement("span");
+        del.className = "tag-del";
+        del.textContent = "✕";
+        del.title = "删除该标签（同时从组合里移除）";
+        del.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          removeTag(t.id);
+        });
+        label.appendChild(del);
+      }
+
       box.appendChild(label);
     });
   }
@@ -415,33 +430,28 @@
   /* ------------------- 自定义权重档位 ------------------- */
   let weightModalState = { customId: null, kw: null };
 
-  function openWeightModal(customId) {
-    const modal = $("weight-modal");
-    const custom = state.weightCustom || [];
-    const editing = customId ? custom.find((c) => c.id === customId) : null;
+  /* ------------------- 自定义版本标签 ------------------- */
+  let tagModalState = { kw: null };
 
-    $("weight-modal-title").textContent = editing ? "编辑自定义档位" : "添加自定义档位";
-    $("weight-name").value = editing ? editing.name || "" : "";
-
-    const host = $("weight-keywords");
-    weightModalState.customId = editing ? editing.id : null;
-    weightModalState.kw = createKeywordInput(host, editing ? editing.keywords || [] : []);
-
-    modal.hidden = false;
+  function openTagModal() {
+    $("weight-modal-title").textContent = "添加自定义标签";
+    $("weight-name").value = "";
+    tagModalState.kw = createKeywordInput($("weight-keywords"), []);
+    $("weight-modal").hidden = false;
     setTimeout(() => $("weight-name").focus(), 50);
   }
 
-  function closeWeightModal() {
+  function closeTagModal() {
     $("weight-modal").hidden = true;
-    weightModalState = { customId: null, kw: null };
+    tagModalState = { kw: null };
   }
 
-  function confirmWeightModal() {
+  function confirmTagModal() {
     const name = ($("weight-name").value || "").trim();
-    const keywords = weightModalState.kw ? weightModalState.kw.get() : [];
+    const keywords = tagModalState.kw ? tagModalState.kw.get() : [];
 
     if (!name) {
-      toast("请填写档位名称");
+      toast("请填写标签名称");
       return;
     }
     if (!keywords.length) {
@@ -449,82 +459,48 @@
       return;
     }
 
-    const custom = (state.weightCustom || []).slice();
-    if (weightModalState.customId) {
-      // 编辑已有档位
-      const idx = custom.findIndex((c) => c.id === weightModalState.customId);
-      if (idx >= 0) {
-        custom[idx] = { ...custom[idx], name, keywords };
-      }
-      weightMsg("档位已修改，记得保存", "busy");
-    } else {
-      // 新增档位，id 由后端最终生成；这里先给个临时 id
-      const tmpId = "tmp" + Date.now().toString(36);
-      custom.push({ id: tmpId, name, keywords });
-      weightMsg("已添加档位，记得保存", "busy");
+    // 重名检查（不区分大小写），避免又出现两个同名标签
+    const dup = (state.weightTags || []).some(
+      (t) => String(t.name || "").trim().toLowerCase() === name.toLowerCase()
+    );
+    if (dup) {
+      toast("已有同名标签：" + name);
+      return;
     }
 
-    state.weightCustom = custom;
-    closeWeightModal();
-    rerenderWeightsWithCustom();
+    state.weightTags.push({
+      id: "t" + Date.now().toString(36),
+      name,
+      keywords,
+      regex: "",
+      is_custom: true,
+      is_normal: false,
+    });
+
+    closeTagModal();
+    renderTagGrid();
+    weightMsg("标签已添加，记得保存", "busy");
   }
 
-  /** 用本地 state.weightCustom 重绘（无需重新请求后端） */
-  function rerenderWeightsWithCustom() {
-    const order = collectWeightOrder();
-    // 保持已有顺序，新档位追加到末尾
-    const custom = state.weightCustom || [];
-    const known = new Set(custom.map((c) => "custom:" + c.id));
-    const newOrder = order.filter((t) => !t.startsWith("custom:") || known.has(t));
-    custom.forEach((c) => {
-      const key = "custom:" + c.id;
-      if (!newOrder.includes(key)) newOrder.push(key);
+  function removeTag(tagId) {
+    const tag = (state.weightTags || []).find((x) => x.id === tagId);
+    if (!tag || !tag.is_custom) return;
+
+    // 从所有组合里移除该标签；组合因此变空则整条删掉
+    state.weightCombos = (state.weightCombos || []).filter((c) => {
+      const rest = (c.tags || []).filter((x) => x !== tagId);
+      if (!rest.length) return false;
+      c.tags = rest;
+      return true;
     });
 
-    // 构造一份与后端 GET 返回同构的数据
-    const total = newOrder.length;
-    const tiers = newOrder.map((key, idx) => {
-      if (key.startsWith("custom:")) {
-        const id = key.slice("custom:".length);
-        const c = custom.find((x) => x.id === id) || { name: "自定义", keywords: [] };
-        return {
-          key,
-          label: c.name,
-          desc: "命中关键字：" + (c.keywords || []).join("、"),
-          weight: total - 1 - idx,
-          is_custom: true,
-          custom_id: id,
-          keywords: c.keywords || [],
-        };
-      }
-      const isBuiltin = WEIGHT_BADGE[key];
-      return {
-        key,
-        label: isBuiltin ? key : key,
-        desc: "",
-        weight: total - 1 - idx,
-        is_custom: false,
-      };
-    });
+    state.weightTags = (state.weightTags || []).filter((x) => x.id !== tagId);
+    state.selectedTags.delete(tagId);
 
-    // 内置档位的中文说明从 DOM 已有内容里继承，避免丢文案
-    const prevDesc = {};
-    document.querySelectorAll("#weight-list .weight-item").forEach((n) => {
-      if (!n.dataset.customId) {
-        prevDesc[n.dataset.tier] = {
-          label: n.querySelector(".weight-label").textContent,
-          desc: n.querySelector(".weight-desc").textContent,
-        };
-      }
-    });
-    tiers.forEach((t) => {
-      if (!t.is_custom && prevDesc[t.key]) {
-        t.label = prevDesc[t.key].label;
-        t.desc = prevDesc[t.key].desc;
-      }
-    });
-
-    renderWeights({ tiers, custom });
+    renderTagGrid();
+    renderComboList();
+    updateComboPreview();
+    weightMsg("标签已删除，记得保存", "busy");
   }
 
   function removeCustomTier(node) {
@@ -2438,10 +2414,11 @@
 
     // 自定义权重档位
     $("combo-add").addEventListener("click", addCombo);
-    $("weight-modal-cancel").addEventListener("click", closeWeightModal);
-    $("weight-modal-ok").addEventListener("click", confirmWeightModal);
+    $("tag-add").addEventListener("click", openTagModal);
+    $("weight-modal-cancel").addEventListener("click", closeTagModal);
+    $("weight-modal-ok").addEventListener("click", confirmTagModal);
     $("weight-modal").addEventListener("click", (e) => {
-      if (e.target.id === "weight-modal") closeWeightModal();
+      if (e.target.id === "weight-modal") closeTagModal();
     });
     $("pause-btn").addEventListener("click", toggleLogPause);
     $("clear-btn").addEventListener("click", () => {

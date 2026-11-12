@@ -33,6 +33,9 @@ bp = Blueprint("main", __name__)
 # 界面与日志统一使用完整版本串（含构建 commit 与日期）
 VERSION_LABEL = version_full()
 
+# 内置版本标签的 id 集合（不在其中的视为用户自建标签，可删除）
+_DEFAULT_TAG_IDS = {str(t["id"]) for t in config.DEFAULT_WEIGHT_TAGS}
+
 
 # ---------------------------------------------------------------------------
 # 页面
@@ -189,6 +192,8 @@ def get_weight_order():
             "keywords": list(t.get("keywords") or []),
             "regex": t.get("regex") or "",
             "is_normal": t["id"] == config.NORMAL_TAG_ID,
+            # 内置标签不可删除；用户自建的可以删
+            "is_custom": t["id"] not in _DEFAULT_TAG_IDS,
         }
         for t in tags
     ]

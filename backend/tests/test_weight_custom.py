@@ -135,21 +135,39 @@ config.init_config()
 combos = config.get_weight_combos()
 tags = config.get_weight_tags()
 check("迁移后组合数 = 旧档位数", len(combos) == 5, combos)
-check("迁移后出现自定义标签 c_k4", any(t["id"] == "c_k4" for t in tags),
-      [t["id"] for t in tags])
-check("自定义标签沿用原关键字",
-      next((t["keywords"] for t in tags if t["id"] == "c_k4"), None) == ["4K", "2160p"],
-      next((t["keywords"] for t in tags if t["id"] == "c_k4"), None))
-check("组合顺序与旧档位顺序一致",
+# 档位名「4K」与内置标签同名 -> 合并进内置 4K 标签，不再新建 c_k4
+check("同名自定义档位合并进内置 4K 标签（不新建 c_k4）",
+      not any(t["id"] == "c_k4" for t in tags), [t["id"] for t in tags])
+check("内置 4K 标签的关键字已并入原关键字",
+      next((t["keywords"] for t in tags if t["id"] == "4k"), None) == ["4k", "2160p"],
+      next((t["keywords"] for t in tags if t["id"] == "4k"), None))
+check("组合引用的是内置 4K 标签",
       [c["tags"] for c in combos]
-      == [["sub", "crack"], ["c_k4"], ["sub"], ["crack"], ["normal"]],
+      == [["sub", "crack"], ["4k"], ["sub"], ["crack"], ["normal"]],
       [c["tags"] for c in combos])
+check("标签无重名",
+      len({t["name"] for t in tags}) == len(tags), [t["name"] for t in tags])
 
 check("4K 文件命中迁移后的自定义标签", wf("ABF-391-4K.mp4") == 3,
       wf("ABF-391-4K.mp4"))
 check("UC 样本仍为最高权重 4", wf("ABF-391-UC.mp4") == 4, wf("ABF-391-UC.mp4"))
 check("C 样本权重 2", wf("ABF-391-C.mp4") == 2, wf("ABF-391-C.mp4"))
 check("普通样本权重 0", wf("ABF-391.mp4") == 0, wf("ABF-391.mp4"))
+
+# 不同名的自定义档位仍应新建标签
+write_cfg({
+    "WEIGHT_ORDER": ["UC", "custom:hevc", "NORMAL"],
+    "WEIGHT_CUSTOM": [{"id": "hevc", "name": "HEVC", "keywords": ["hevc", "h265"]}],
+})
+config.init_config()
+_tags = config.get_weight_tags()
+check("不同名档位会新建标签 c_hevc",
+      any(t["id"] == "c_hevc" for t in _tags), [t["id"] for t in _tags])
+check("新标签关键字正确",
+      next((t["keywords"] for t in _tags if t["id"] == "c_hevc"), None) == ["hevc", "h265"],
+      next((t["keywords"] for t in _tags if t["id"] == "c_hevc"), None))
+check("新建标签名不重复",
+      len({t["name"] for t in _tags}) == len(_tags), [t["name"] for t in _tags])
 
 # 已配置组合的用户不会被迁移覆盖
 write_cfg({
@@ -161,7 +179,80 @@ check("已有组合时不被迁移覆盖",
       len(config.get_weight_combos()) == 1, config.get_weight_combos())
 
 # ===========================================================================
-print("\n=== D. 前端结构 ===")
+# ===========================================================================
+print("\n=== D. 用户自定义标签 ===")
+# 重置为默认后再新增一个自定义标签
+client.post("/api/weight", json={"combos": [
+    {"tags": ["sub", "crack"]}, {"tags": ["sub"]},
+    {"tags": ["crack"]}, {"tags": ["normal"]},
+]})
+base_tags = config.get_weight_tags()
+check("重置后有 11 个内置标签", len(base_tags) == 11, len(base_tags))
+check("内置标签都不是自定义", not any(t.get("is_custom") for t in base_tags))
+
+new_tag = {"id": "dual", "name": "国粤双语", "keywords": ["国粤", "双语", "dual"], "regex": ""}
+tags_with_new = base_tags + [new_tag]
+r = client.post("/api/weight", json={
+    "tags": tags_with_new,
+    "combos": [
+        {"tags": ["dual"]},
+        {"tags": ["sub", "crack"]},
+        {"tags": ["normal"]},
+    ],
+})
+j = r.get_json() or {}
+check("保存自定义标签成功", j.get("success") is True, j)
+
+tags_now = config.get_weight_tags()
+check("标签总数 +1", len(tags_now) == 12, len(tags_now))
+dual = next((t for t in tags_now if t["name"] == "国粤双语"), None)
+check("自定义标签已存在", dual is not None, [t["name"] for t in tags_now])
+check("自定义标签关键字正确",
+      dual and dual["keywords"] == ["国粤", "双语", "dual"],
+      dual["keywords"] if dual else None)
+
+# API 应把自建标签标记为 is_custom
+api_tags = (client.get("/api/weight").get_json() or {}).get("tags") or []
+api_dual = next((t for t in api_tags if t["name"] == "国粤双语"), None)
+check("API 标记 is_custom=True", api_dual and api_dual.get("is_custom") is True, api_dual)
+api_sub = next((t for t in api_tags if t["id"] == "sub"), None)
+check("内置标签 is_custom=False", api_sub and api_sub.get("is_custom") is False, api_sub)
+
+check("自定义标签参与判定：命中 -> 权重 2",
+      wf("ABF-391-国粤双语.mp4") == 2, wf("ABF-391-国粤双语.mp4"))
+check("自定义标签参与判定：未命中 -> 落到普通 0",
+      wf("ABF-391.mp4") == 0, wf("ABF-391.mp4"))
+check("同名字幕仍走「字幕+破解」最高档",
+      wf("ABF-391-UC.mp4") == 1, wf("ABF-391-UC.mp4"))
+
+# 删除自定义标签后，引用它的组合应被清理
+r = client.post("/api/weight", json={
+    "tags": base_tags,
+    "combos": [{"tags": ["sub"]}, {"tags": ["normal"]}],
+})
+check("删除自定义标签后保存成功", (r.get_json() or {}).get("success") is True)
+check("标签回到 11 个", len(config.get_weight_tags()) == 11, len(config.get_weight_tags()))
+check("不再有该标签",
+      not any(t["name"] == "国粤双语" for t in config.get_weight_tags()))
+
+# 同名标签会被合并，不会出现两个
+r = client.post("/api/weight", json={
+    "tags": base_tags + [
+        {"id": "", "name": "LTX", "keywords": ["ltx-raw"], "regex": ""},
+    ],
+    "combos": [{"tags": ["sub"]}, {"tags": ["normal"]}],
+})
+check("同名标签提交不报错", (r.get_json() or {}).get("success") is True)
+names_now = [t["name"] for t in config.get_weight_tags()]
+check("同名 LTX 被合并（不会出现两个）",
+      names_now.count("LTX") == 1, names_now)
+ltx = next((t for t in config.get_weight_tags() if t["name"] == "LTX"), None)
+check("合并后保留两边的关键字",
+      ltx and "ltx" in ltx["keywords"] and "ltx-raw" in ltx["keywords"],
+      ltx["keywords"] if ltx else None)
+
+# ===========================================================================
+print("\n=== E. 前端结构 ===")
 HTML = open(os.path.join(BASE, "app", "templates", "index.html"), encoding="utf-8").read()
 JS = open(os.path.join(BASE, "app", "static", "js", "app.js"), encoding="utf-8").read()
 CSS = open(os.path.join(BASE, "app", "static", "css", "app.css"), encoding="utf-8").read()
@@ -185,6 +276,14 @@ check("旧「添加自定义档位」按钮已移除", 'id="weight-add-custom"' 
 check("CSS 有标签网格样式", ".tag-grid" in CSS)
 check("CSS 有标签勾选样式", ".tag-check" in CSS)
 check("CSS 有组合标签样式", ".wtag" in CSS)
+
+check("有「添加标签」按钮", 'id="tag-add"' in HTML)
+check("JS 有 openTagModal", "function openTagModal" in JS)
+check("JS 有 confirmTagModal", "function confirmTagModal" in JS)
+check("JS 有 removeTag", "function removeTag" in JS)
+check("标签可删除（自定义才显示 ✕）", "tag-del" in JS)
+check("CSS 有删除按钮样式", ".tag-check .tag-del" in CSS)
+check("添加标签会做重名检查", "已有同名标签" in JS)
 
 print("\n" + "=" * 50)
 print(f"结果: {PASS} 通过, {FAIL} 失败")

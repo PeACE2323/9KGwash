@@ -174,7 +174,7 @@ def _process_xiban_locked(file_path: str) -> None:
     washed_anything = False
     dry_run = config.get_dry_run()
 
-    versions.sort(key=lambda x: (x["weight"], x["folder_mtime"], x["file_mtime"]), reverse=True)
+    versions.sort(key=lambda x: (x["weight"], x["file_mtime"], x["folder_mtime"]), reverse=True)
     king_version = versions[0]
 
     # ------------------------------------------------------------------

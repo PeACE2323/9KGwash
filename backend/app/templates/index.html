@@ -319,6 +319,9 @@
             <div class="combo-builder">
               <div class="combo-builder-head">
                 <span class="combo-builder-title">自由组合版本标签</span>
+                <span class="combo-builder-actions">
+                  <button type="button" class="btn btn-ghost btn-xs" id="tag-add">➕ 添加标签</button>
+                </span>
               </div>
               <div class="tag-grid" id="tag-grid"></div>
               <div class="combo-add-row">
@@ -527,17 +530,17 @@
     </div>
   </template>
 
-  <!-- 自定义权重档位编辑弹窗 -->
+  <!-- 自定义版本标签编辑弹窗 -->
   <div id="weight-modal" class="modal" hidden>
     <div class="modal-card">
-      <h3 id="weight-modal-title">添加自定义档位</h3>
+      <h3 id="weight-modal-title">添加自定义标签</h3>
       <div class="path-form">
         <label class="field">
-          <span>档位名称</span>
-          <input type="text" id="weight-name" class="path-input" placeholder="如：4K 原盘" autocomplete="off">
+          <span>标签名称</span>
+          <input type="text" id="weight-name" class="path-input" placeholder="如：国粤双语" autocomplete="off">
         </label>
         <label class="field">
-          <span>关键字（回车或逗号确认，命中任一即归类到本档）</span>
+          <span>关键字（回车或逗号确认，命中任一即算具备该标签）</span>
           <div class="kw-input" id="weight-keywords" data-placeholder="输入关键字后回车添加"></div>
         </label>
       </div>

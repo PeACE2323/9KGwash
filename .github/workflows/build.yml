@@ -72,6 +72,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_weight_order
 
+      - name: 运行同权重决胜测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_weight_tiebreak
+
       - name: 运行关键字标签测试
         working-directory: backend
         env:

@@ -212,8 +212,13 @@ def part_stripped_basename(basename: str) -> str:
 
 
 def sort_key(file_info: dict):
-    """王者排序键：权重 > 文件夹时间 > 文件时间（均为降序）。"""
-    return (file_info["weight"], file_info["folder_mtime"], file_info["file_mtime"])
+    """王者排序键：权重 > 文件时间 > 文件夹时间（均为降序）。
+
+    同一权重（同一级别）时，**新文件取代旧文件**：
+    优先比较文件修改时间；文件时间相同时再看所在目录的时间。
+    （旧实现是目录时间优先，遇到「目录新但文件旧」会误留旧文件。）
+    """
+    return (file_info["weight"], file_info["file_mtime"], file_info["folder_mtime"])
 
 
 def is_aux_dir(name: str) -> bool:
