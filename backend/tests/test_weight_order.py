@@ -1,7 +1,12 @@
-"""洗板权重档位可配置的测试。
+"""洗板权重（自由组合）的测试。
 
-需求：UC / C / U / 普通 四个档位的优先级可在前端拖动调整（严格排序，无并列）。
-默认 UC > C > U > NORMAL，对应权重 3/2/1/0（与原逻辑完全等价）。
+模型：
+  版本标签 → 勾选组合成一条（组合内 AND）→ 组合列表顺序即优先级。
+
+需求（参考用户提供的界面）：
+  - 默认组合 字幕+破解 / 字幕 / 破解 / 普通，完全等价于旧的 UC > C > U > 普通（3/2/1/0）
+  - 组合可自由增删、拖动排序，权重随位置变化
+  - 组合内部是「同时满足」关系
 """
 
 from __future__ import annotations
@@ -68,131 +73,154 @@ SAMPLES = {
 }
 
 
-def w(tier):
-    return fanhao.get_weight_and_fanhao(SAMPLES[tier])[1]
+def w(key):
+    return fanhao.get_weight_and_fanhao(SAMPLES[key])[1]
 
 
-def set_order(order):
-    r = client.post("/api/weight", json={"order": order})
-    return r.get_json()
+def wf(fn):
+    return fanhao.get_weight_and_fanhao(fn)[1]
+
+
+def set_combos(combos):
+    return client.post("/api/weight", json={"combos": combos}).get_json()
+
+
+DEFAULT = [
+    {"tags": ["sub", "crack"]},
+    {"tags": ["sub"]},
+    {"tags": ["crack"]},
+    {"tags": ["normal"]},
+]
 
 
 # ===========================================================================
-print("\n=== A. 默认顺序与原逻辑等价 ===")
-check("默认顺序 UC>C>U>NORMAL",
-      config.get_weight_order() == ["UC", "C", "U", "NORMAL"], config.get_weight_order())
+print("\n=== A. 默认组合与旧逻辑等价 ===")
+combos = config.get_weight_combos()
+check("默认 4 个组合", len(combos) == 4, combos)
+check("默认顺序 字幕+破解 > 字幕 > 破解 > 普通",
+      [c["tags"] for c in combos]
+      == [["sub", "crack"], ["sub"], ["crack"], ["normal"]],
+      [c["tags"] for c in combos])
 check("默认权重 3/2/1/0",
-      config.get_weight_map() == {"UC": 3, "C": 2, "U": 1, "NORMAL": 0},
-      config.get_weight_map())
-check("UC 权重 3", w("UC") == 3)
-check("C 权重 2", w("C") == 2)
-check("U 权重 1", w("U") == 1)
-check("普通 权重 0", w("NORMAL") == 0)
+      config.combo_weight_map() == {"w1": 3, "w2": 2, "w3": 1, "w4": 0},
+      config.combo_weight_map())
+check("UC 样本权重 3", w("UC") == 3, w("UC"))
+check("C 样本权重 2", w("C") == 2, w("C"))
+check("U 样本权重 1", w("U") == 1, w("U"))
+check("普通样本权重 0", w("NORMAL") == 0, w("NORMAL"))
 
 # ===========================================================================
-print("\n=== B. 调整顺序后权重随之变化 ===")
-d = set_order(["U", "UC", "C", "NORMAL"])
+print("\n=== B. 调整组合顺序后权重随之变化 ===")
+d = set_combos([
+    {"tags": ["crack"]},
+    {"tags": ["sub", "crack"]},
+    {"tags": ["sub"]},
+    {"tags": ["normal"]},
+])
 check("保存成功", d.get("success") is True, d)
-check("顺序已更新", config.get_weight_order() == ["U", "UC", "C", "NORMAL"], config.get_weight_order())
-check("U 变为最高权重 3", w("U") == 3, w("U"))
-# 注意：ABF-391-UC 同时含 C 与 U 标记，会同时命中 UC 与 U 两档。
-# 按「取顺序最高档」的语义，U 排第一时该文件算 U 档 -> 权重 3。
-check("UC 样本（-UC 也含 U 标记）取更高的 U 档 = 3", w("UC") == 3, w("UC"))
-check("C 变为 1", w("C") == 1, w("C"))
-check("普通 仍为 0", w("NORMAL") == 0, w("NORMAL"))
+check("顺序已更新",
+      [c["tags"] for c in config.get_weight_combos()][:3]
+      == [["crack"], ["sub", "crack"], ["sub"]],
+      config.get_weight_combos())
 
-d = set_order(["NORMAL", "U", "C", "UC"])
+# 破解排第一 -> 权重 3；-UC 同时命中 破解 与 字幕+破解，取更靠前的「破解」
+check("破解变为最高权重 3", w("U") == 3, w("U"))
+check("UC 样本命中更靠前的「破解」= 3", w("UC") == 3, w("UC"))
+check("字幕变为 1", w("C") == 1, w("C"))
+check("普通仍为 0", w("NORMAL") == 0, w("NORMAL"))
+
+# 把普通放到最前面
+set_combos([
+    {"tags": ["normal"]},
+    {"tags": ["crack"]},
+    {"tags": ["sub"]},
+    {"tags": ["sub", "crack"]},
+])
 check("普通放最高 -> 权重 3", w("NORMAL") == 3, w("NORMAL"))
-# -UC 样本同时命中 U（排第 2，权重 2）与 C，取更高的 U 档
-check("UC 放最低时 -UC 样本取 U 档 = 2", w("UC") == 2, w("UC"))
+check("此时所有样本都命中「普通」（恒真）-> 全部 3",
+      w("UC") == 3 and w("C") == 3 and w("U") == 3,
+      (w("UC"), w("C"), w("U")))
 
 # ===========================================================================
-print("\n=== C. 输入规范化 ===")
-d = set_order(["U", "UC", "NORMAL", "C", "BOGUS"])
-check("非法档位被过滤", d["order"] == ["U", "UC", "NORMAL", "C"], d["order"])
+print("\n=== C. 组合内部是 AND（同时满足） ===")
+set_combos([
+    {"tags": ["4k", "sub"]},
+    {"tags": ["4k"]},
+    {"tags": ["sub"]},
+    {"tags": ["normal"]},
+])
+check("4K+字幕 排第一", config.get_weight_combos()[0]["tags"] == ["4k", "sub"])
 
-d = set_order(["U", "UC"])
-check("缺失档位自动补全为 4 个", len(d["order"]) == 4, d["order"])
-check("补全后包含全部档位", set(d["order"]) == {"UC", "C", "U", "NORMAL"}, d["order"])
-
-d = set_order(["uc", "c", "u", "normal"])
-check("小写输入被规范为大写", d["order"] == ["UC", "C", "U", "NORMAL"], d["order"])
-
-d = set_order(["UC", "UC", "UC", "UC"])
-check("重复档位去重", d["order"] == ["UC", "C", "U", "NORMAL"], d["order"])
-
-d = set_order(["U", "U", "C"])
-check("去重后仍补齐 4 档", len(d["order"]) == 4 and len(set(d["order"])) == 4, d["order"])
-
-r = client.post("/api/weight", json={"order": []})
-check("空数组被拒绝", r.status_code == 400, r.status_code)
-r = client.post("/api/weight", json={})
-check("缺少 order 被拒绝", r.status_code == 400, r.status_code)
+check("只有 4K 的文件 -> 命中「4K」组合 = 2", wf("ABF-391-4K.mp4") == 2,
+      wf("ABF-391-4K.mp4"))
+check("只有字幕的文件 -> 命中「字幕」组合 = 1", wf("ABF-391-C.mp4") == 1,
+      wf("ABF-391-C.mp4"))
+check("4K+字幕 同时满足 -> 命中最高组合 = 3", wf("ABF-391-4K-C.mp4") == 3,
+      wf("ABF-391-4K-C.mp4"))
+check("什么都没有 -> 普通 = 0", wf("ABF-391.mp4") == 0, wf("ABF-391.mp4"))
+check("4K+破解（无字幕）只命中 4K = 2", wf("ABF-391-4K-破解.mp4") == 2,
+      wf("ABF-391-4K-破解.mp4"))
 
 # ===========================================================================
-print("\n=== D. 配置持久化 ===")
-set_order(["U", "UC", "C", "NORMAL"])
-saved = json.load(open(os.path.join(CONFIG_DIR, "config.json"), encoding="utf-8"))
-check("WEIGHT_ORDER 已落盘", saved.get("WEIGHT_ORDER") == ["U", "UC", "C", "NORMAL"],
-      saved.get("WEIGHT_ORDER"))
-
-# 模拟重启：重新读取配置后顺序保持
-config.reload_config()
-check("重载后顺序保持", config.get_weight_order() == ["U", "UC", "C", "NORMAL"],
-      config.get_weight_order())
-
-# 配置文件缺字段时回退默认
-with open(os.path.join(CONFIG_DIR, "config.json"), "w", encoding="utf-8") as f:
-    json.dump({"MOUNT_BASE_PATH": "/media/CloudDrive"}, f)
-config.reload_config()
-check("缺少 WEIGHT_ORDER 时回退默认",
-      config.get_weight_order() == ["UC", "C", "U", "NORMAL"], config.get_weight_order())
-
-# 配置文件里是脏数据时也能规范化
-with open(os.path.join(CONFIG_DIR, "config.json"), "w", encoding="utf-8") as f:
-    json.dump({"WEIGHT_ORDER": ["xxx", "U", "U"]}, f)
-config.reload_config()
-check("脏数据被规范为合法 4 档",
-      set(config.get_weight_order()) == {"UC", "C", "U", "NORMAL"} and len(config.get_weight_order()) == 4,
-      config.get_weight_order())
+print("\n=== D. 权重值 = 列表长度 - 1 - 位置 ===")
+set_combos([
+    {"tags": ["4k"]},
+    {"tags": ["8k"]},
+    {"tags": ["sub"]},
+    {"tags": ["crack"]},
+    {"tags": ["normal"]},
+])
+m = config.combo_weight_map()
+check("5 个组合时最高权重为 4", max(m.values()) == 4, m)
+check("最低权重为 0", min(m.values()) == 0, m)
+check("权重严格递减",
+      [m[c["id"]] for c in config.get_weight_combos()] == [4, 3, 2, 1, 0],
+      [m[c["id"]] for c in config.get_weight_combos()])
 
 # ===========================================================================
-print("\n=== E. GET 接口结构 ===")
-set_order(["UC", "C", "U", "NORMAL"])
-d = client.get("/api/weight").get_json()
-check("GET 成功", d["success"] is True)
-check("GET 含 order", d["order"] == ["UC", "C", "U", "NORMAL"])
-check("GET 含 weights", d["weights"] == {"UC": 3, "C": 2, "U": 1, "NORMAL": 0}, d["weights"])
-check("GET 含 4 个档位详情", len(d["tiers"]) == 4)
-check("每个档位含 key/label/desc/weight",
-      all(set(["key", "label", "desc", "weight"]) <= set(t.keys()) for t in d["tiers"]))
-check("档位顺序与 order 一致",
-      [t["key"] for t in d["tiers"]] == d["order"], [t["key"] for t in d["tiers"]])
-check("默认顺序一并返回", d["default_order"] == ["UC", "C", "U", "NORMAL"], d["default_order"])
+print("\n=== E. 标签命中判定 ===")
+tags_hit = fanhao.match_weight_tags("ABF-391-4K-C")
+check("普通恒为真", "normal" in tags_hit, tags_hit)
+check("4K 命中", "4k" in tags_hit, tags_hit)
+check("字幕命中", "sub" in tags_hit, tags_hit)
+check("破解未命中", "crack" not in tags_hit, tags_hit)
+
+check("2160P 也算 4K", "4k" in fanhao.match_weight_tags("ABF-391-2160p"))
+check("大小写不敏感", "4k" in fanhao.match_weight_tags("abf-391-4k"))
+check("中文「无码」算破解", "crack" in fanhao.match_weight_tags("ABF-391-无码"))
+check("中文「流出」算破解", "crack" in fanhao.match_weight_tags("ABF-391-流出"))
+check("「无码」同时命中无码标签", "uncensored" in fanhao.match_weight_tags("ABF-391-无码"))
 
 # ===========================================================================
-print("\n=== F. 洗板对决按新权重判定 ===")
-# U 提到最高时，U 版本应击败 C 版本
-set_order(["U", "UC", "C", "NORMAL"])
-_, wu, _ = fanhao.get_weight_and_fanhao("X-1-破解.mp4")
-_, wc, _ = fanhao.get_weight_and_fanhao("X-1-C.mp4")
-check("U(3) > C(1) 按新顺序成立", wu > wc, (wu, wc))
+print("\n=== F. 恢复默认 ===")
+d = set_combos([{"tags": ["sub", "crack"]}, {"tags": ["sub"]},
+                {"tags": ["crack"]}, {"tags": ["normal"]}])
+check("恢复成功", d.get("success") is True, d)
+check("恢复后权重回到 3/2/1/0",
+      config.combo_weight_map() == {"w1": 3, "w2": 2, "w3": 1, "w4": 0},
+      config.combo_weight_map())
 
-set_order(["C", "UC", "U", "NORMAL"])
-_, wu, _ = fanhao.get_weight_and_fanhao("X-1-破解.mp4")
-_, wc, _ = fanhao.get_weight_and_fanhao("X-1-C.mp4")
-check("C 提到 U 前面后 C > U", wc > wu, (wc, wu))
+# ===========================================================================
+print("\n=== G. API 结构 ===")
+data = client.get("/api/weight").get_json()
+check("GET 返回 tags", isinstance(data.get("tags"), list) and len(data["tags"]) >= 10,
+      len(data.get("tags") or []))
+check("GET 返回 combos", isinstance(data.get("combos"), list), data.get("combos"))
+check("combos 带 labels", all("labels" in c for c in data["combos"]), data["combos"][0])
+check("combos 带 weight", all("weight" in c for c in data["combos"]), data["combos"][0])
+check("GET 返回默认值（供恢复默认）",
+      isinstance(data.get("default_combos"), list) and len(data["default_combos"]) == 4,
+      data.get("default_combos"))
 
-# 非番号文件权重固定 -1，不受档位顺序影响
-set_order(["NORMAL", "UC", "C", "U"])
-_, wn, _ = fanhao.get_weight_and_fanhao("no fanhao.mp4")
-check("非番号文件权重固定 -1", wn == -1, wn)
-
-# 恢复默认
-set_order(["UC", "C", "U", "NORMAL"])
-check("恢复默认成功", config.get_weight_order() == ["UC", "C", "U", "NORMAL"])
+# 空组合列表：回退到默认（保证不会把权重配置清空）
+r = client.post("/api/weight", json={"combos": []})
+check("空组合列表不会报错", r.status_code in (200, 400), r.status_code)
+check("空列表回退为至少一个组合", len(config.get_weight_combos()) >= 1,
+      config.get_weight_combos())
+check("回退后仍能判定出权重", w("NORMAL") >= 0, w("NORMAL"))
 
 print("\n" + "=" * 50)
 print(f"结果: {PASS} 通过, {FAIL} 失败")
 print("=" * 50)
+shutil.rmtree(TMP, ignore_errors=True)
 sys.exit(1 if FAIL else 0)

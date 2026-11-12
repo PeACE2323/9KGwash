@@ -2279,3 +2279,155 @@ html[data-theme="light"] .scan-path-item {
   .shell-item { flex-wrap: wrap; }
   .shell-item .shell-badge { margin-left: 21px; }
 }
+
+/* ---------- 洗版权重：自由组合 ---------- */
+.combo-builder {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-inset);
+}
+
+.combo-builder-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.combo-builder-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.tag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.tag-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.tag-check:hover {
+  border-color: var(--accent-border, rgba(236, 72, 153, 0.45));
+  color: var(--text);
+}
+.tag-check.is-checked {
+  border-color: var(--accent, #ec4899);
+  background: rgba(236, 72, 153, 0.1);
+  color: var(--text);
+}
+.tag-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent, #ec4899);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.tag-check.is-normal {
+  border-style: dashed;
+}
+.tag-check.is-normal span {
+  font-style: italic;
+}
+
+.combo-add-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
+
+.combo-preview {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(236, 72, 153, 0.1);
+  border: 1px solid rgba(236, 72, 153, 0.28);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-preview.is-empty {
+  color: var(--text-faint);
+  background: transparent;
+  border-color: var(--border);
+}
+
+.combo-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 18px 0 8px;
+}
+
+.combo-list-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.combo-list-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* 组合行里的标签 */
+.weight-tags {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.wtag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--mono);
+  color: var(--text);
+  background: rgba(96, 165, 250, 0.14);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
+.wtag.is-normal {
+  color: var(--text-dim);
+  background: rgba(148, 163, 184, 0.12);
+  border-color: var(--border-strong);
+  font-style: italic;
+}
+
+.wplus {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+}
+
+@media (max-width: 700px) {
+  .tag-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+  .combo-add-row { flex-direction: column; align-items: flex-start; }
+}

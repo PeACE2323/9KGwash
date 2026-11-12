@@ -41,6 +41,10 @@ DEFAULT_CONFIG = {
     "WEIGHT_ORDER": ["UC", "C", "U", "NORMAL"],
     # 自定义权重档位：[{"id":"xxx","name":"4K","keywords":["4K","2160p"]}]
     "WEIGHT_CUSTOM": [],
+    # 自由组合权重：标签定义（空 = 使用 DEFAULT_WEIGHT_TAGS）
+    "WEIGHT_TAGS": [],
+    # 自由组合权重：组合列表（顺序即优先级，空 = 使用 DEFAULT_WEIGHT_COMBOS）
+    "WEIGHT_COMBOS": [],
     # 空间猎犬扫描路径（空 = 使用元数据侧监听目录）
     "HOUND_SCAN_PATHS": [],
     # 影片查重扫描路径（空 = 使用元数据侧监听目录）
@@ -85,6 +89,65 @@ DEFAULT_HOUND_CONTENT_EXTS = [
 # 自定义档位（带关键字的）可以和内置档位一起混排。
 WEIGHT_TIERS = ("UC", "U", "C", "NORMAL")
 DEFAULT_WEIGHT_ORDER = ["UC", "C", "U", "NORMAL"]
+
+# ---------------------------------------------------------------------------
+# 自由组合权重：标签 + 组合
+# ---------------------------------------------------------------------------
+# 思路（参考用户提供的界面）：
+#   1) 先定义一组「版本标签」，每个标签有自己的识别规则；
+#   2) 用户任意勾选若干标签 → 生成一个「组合」（组合内是 AND 关系）；
+#   3) 组合列表的顺序就是优先级：越靠前权重越高。
+#
+# 「普通」是特殊标签：恒为真，用作兜底组合。
+#   所以「普通 + 字幕 + 4K」等价于「字幕 AND 4K」，
+#   而单独一条「普通」就是「其他都没命中时的默认档」。
+#
+# 标签识别规则：
+#   keywords  —— 文件名（不含扩展名、已转小写）里包含任一即算命中
+#   regex     —— 可选正则，用于 `-C` / `-U` 这类后缀标记的精确匹配
+#
+# 默认标签刻意与旧内置档位的判定保持一致（见 fanhao._HAS_C_RE / _HAS_U_RE），
+# 这样默认组合 字幕+破解 / 字幕 / 破解 / 普通 完全等价于旧的 UC / C / U / 普通。
+DEFAULT_WEIGHT_TAGS = [
+    {"id": "normal", "name": "普通", "keywords": [], "regex": ""},
+    {
+        "id": "crack",
+        "name": "破解",
+        "keywords": ["无码", "破解", "流出"],
+        "regex": r"[-_]U(?![A-Z0-9])|[-_]UC(?![A-Z0-9])|[-_]CU(?![A-Z0-9])",
+    },
+    {"id": "censored", "name": "有码", "keywords": ["有码"], "regex": ""},
+    {
+        "id": "uncensored",
+        "name": "无码",
+        "keywords": ["无码", "无修正", "uncensored"],
+        "regex": "",
+    },
+    {"id": "4k", "name": "4K", "keywords": ["4k", "2160p"], "regex": ""},
+    {"id": "8k", "name": "8K", "keywords": ["8k", "4320p"], "regex": ""},
+    {"id": "leak", "name": "流出", "keywords": ["流出", "leak"], "regex": ""},
+    {"id": "720p", "name": "720P", "keywords": ["720p"], "regex": ""},
+    {"id": "1080p", "name": "1080P", "keywords": ["1080p"], "regex": ""},
+    {
+        "id": "sub",
+        "name": "字幕",
+        "keywords": ["中字", "字幕", "chinese", "chs", "cht"],
+        "regex": r"[-_]C(?![A-Z0-9])|[-_]UC(?![A-Z0-9])|[-_]CU(?![A-Z0-9])",
+    },
+    {"id": "ltx", "name": "LTX", "keywords": ["ltx"], "regex": ""},
+]
+
+# 默认组合顺序（高 -> 低），等价于旧的 UC > C > U > 普通
+DEFAULT_WEIGHT_COMBOS = [
+    {"id": "w1", "tags": ["sub", "crack"]},
+    {"id": "w2", "tags": ["sub"]},
+    {"id": "w3", "tags": ["crack"]},
+    {"id": "w4", "tags": ["normal"]},
+]
+
+# 「普通」标签的固定 id：恒为真
+NORMAL_TAG_ID = "normal"
+
 WEIGHT_TIER_LABELS = {
     "UC": "UC · 中字+无码",
     "C": "C · 中字",
@@ -179,6 +242,136 @@ def normalize_weight_custom(raw) -> list[dict]:
     return out
 
 
+def normalize_weight_tags(raw) -> list[dict]:
+    """规范化「版本标签」定义。
+
+    每个标签：
+        {"id":"4k", "name":"4K", "keywords":["4k","2160p"], "regex":""}
+    - id 自动生成，保证唯一
+    - name 为空则丢弃（标签必须有可见名字）
+    - keywords 去重（不分大小写）
+    - regex 为空串表示不使用正则
+    - 「普通」标签会被强制保留为第一个（恒为真，作为兜底）
+    """
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return [dict(t) for t in DEFAULT_WEIGHT_TAGS]
+
+    out: list[dict] = []
+    used_ids: set[str] = set()
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+
+        kws = item.get("keywords")
+        if isinstance(kws, str):
+            kws = [x for x in kws.replace("，", ",").replace("、", ",").replace("\n", ",").split(",")]
+        if not isinstance(kws, (list, tuple)):
+            kws = []
+
+        clean: list[str] = []
+        seen: set[str] = set()
+        for k in kws:
+            v = str(k).strip()
+            if not v:
+                continue
+            key = v.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            clean.append(v)
+
+        cid = str(item.get("id") or "").strip().lower()
+        if not cid or cid in used_ids:
+            base = f"t{idx + 1}"
+            cid = base
+            n = 2
+            while cid in used_ids:
+                cid = f"{base}_{n}"
+                n += 1
+        used_ids.add(cid)
+
+        regex = str(item.get("regex") or "").strip()
+        # 正则写错时静默丢弃，避免运行时崩掉
+        if regex:
+            try:
+                re.compile(regex)
+            except re.error:
+                regex = ""
+
+        out.append({"id": cid, "name": name, "keywords": clean, "regex": regex})
+
+    if not out:
+        return [dict(t) for t in DEFAULT_WEIGHT_TAGS]
+
+    # 保证「普通」存在且排在第一个（兜底标签）
+    if not any(t["id"] == NORMAL_TAG_ID for t in out):
+        out.insert(0, dict(DEFAULT_WEIGHT_TAGS[0]))
+    return out
+
+
+def normalize_weight_combos(raw, tags: list[dict] | None = None) -> list[dict]:
+    """规范化「组合」列表（顺序即优先级，高 -> 低）。
+
+    每个组合：
+        {"id":"w1", "tags":["sub","crack"]}
+    - tags 里只保留真实存在的标签 id，去重
+    - 空 tags 的组合丢弃
+    - 顺序保持用户给定的顺序（这就是优先级）
+    """
+    if tags is None:
+        tags = normalize_weight_tags(current_config().get("WEIGHT_TAGS"))
+    valid = {t["id"] for t in tags}
+
+    if not isinstance(raw, (list, tuple)) or not raw:
+        # 空 = 使用默认组合，但要过滤掉已被删除的标签
+        out = []
+        for c in DEFAULT_WEIGHT_COMBOS:
+            keep = [t for t in c["tags"] if t in valid]
+            if keep:
+                out.append({"id": c["id"], "tags": keep})
+        return out or [{"id": "w1", "tags": [NORMAL_TAG_ID]}]
+
+    out: list[dict] = []
+    used_ids: set[str] = set()
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+
+        raw_tags = item.get("tags")
+        if isinstance(raw_tags, str):
+            raw_tags = [x.strip() for x in raw_tags.replace("，", ",").split(",")]
+        if not isinstance(raw_tags, (list, tuple)):
+            raw_tags = []
+
+        clean: list[str] = []
+        for t in raw_tags:
+            tid = str(t).strip().lower()
+            if not tid or tid not in valid or tid in clean:
+                continue
+            clean.append(tid)
+
+        if not clean:
+            continue
+
+        cid = str(item.get("id") or "").strip().lower()
+        if not cid or cid in used_ids:
+            base = f"w{idx + 1}"
+            cid = base
+            n = 2
+            while cid in used_ids:
+                cid = f"{base}_{n}"
+                n += 1
+        used_ids.add(cid)
+
+        out.append({"id": cid, "tags": clean})
+
+    return out or [{"id": "w1", "tags": [NORMAL_TAG_ID]}]
+
+
 def _all_valid_tiers(custom: list[dict]) -> list[str]:
     """当前全部合法档位：内置 4 档 + 自定义档。"""
     return list(WEIGHT_TIERS) + [CUSTOM_TIER_PREFIX + c["id"] for c in custom]
@@ -229,6 +422,61 @@ def _build_weight_map(order: list[str]) -> dict:
     return {tier: (n - 1 - idx) for idx, tier in enumerate(order)}
 
 
+def _build_combo_weight_map(combos: list[dict]) -> dict:
+    """组合顺序 -> 权重：列表第一个权重最高。
+
+    默认 4 个组合时权重为 3 / 2 / 1 / 0，
+    与旧内置档位 UC > C > U > 普通 完全一致。
+    """
+    n = len(combos)
+    return {c["id"]: (n - 1 - idx) for idx, c in enumerate(combos)}
+
+
+def _migrate_custom_to_combos(
+    custom: list[dict], order: list[str]
+) -> tuple[list[dict], list[dict]]:
+    """把旧「自定义档位（关键字 OR）」迁移成「标签 + 组合（AND）」。
+
+    映射关系：
+        内置 UC      -> 组合 [字幕, 破解]
+        内置 C       -> 组合 [字幕]
+        内置 U       -> 组合 [破解]
+        内置 NORMAL  -> 组合 [普通]
+        custom:<id>  -> 新标签 c_<id>（沿用原关键字），组合 [c_<id>]
+
+    由于每个自定义档位原本就是「任一关键字命中即算」，
+    迁移成「只含一个标签的组合」后语义完全等价（单元素 AND = 原 OR 关键字）。
+    顺序沿用原 WEIGHT_ORDER，因此权重数值与迁移前一致。
+    """
+    tags = [dict(t) for t in DEFAULT_WEIGHT_TAGS]
+    for c in custom:
+        tags.append(
+            {
+                "id": f"c_{c['id']}",
+                "name": c["name"],
+                "keywords": list(c.get("keywords") or []),
+                "regex": "",
+            }
+        )
+
+    builtin_map = {
+        "UC": ["sub", "crack"],
+        "C": ["sub"],
+        "U": ["crack"],
+        "NORMAL": ["normal"],
+    }
+
+    combos: list[dict] = []
+    for tier in order:
+        if tier in builtin_map:
+            combos.append({"id": f"m_{tier.lower()}", "tags": list(builtin_map[tier])})
+        elif str(tier).lower().startswith(CUSTOM_TIER_PREFIX):
+            cid = str(tier)[len(CUSTOM_TIER_PREFIX):]
+            combos.append({"id": f"m_{cid}", "tags": [f"c_{cid}"]})
+
+    return tags, combos or [{"id": "m_normal", "tags": ["normal"]}]
+
+
 def _apply_runtime(conf: dict) -> None:
     _runtime["DRY_RUN"] = bool(conf.get("DRY_RUN", True))
     _runtime["DB_ONLINE_WEBHOOK"] = conf.get("DB_ONLINE_WEBHOOK", "") or ""
@@ -244,6 +492,13 @@ def _apply_runtime(conf: dict) -> None:
     _runtime["WEIGHT_MAP"] = _build_weight_map(order)
     _runtime["WEIGHT_ORDER"] = order
     _runtime["WEIGHT_CUSTOM"] = custom
+
+    # 自由组合权重
+    tags = normalize_weight_tags(conf.get("WEIGHT_TAGS"))
+    combos = normalize_weight_combos(conf.get("WEIGHT_COMBOS"), tags)
+    _runtime["WEIGHT_TAGS"] = tags
+    _runtime["WEIGHT_COMBOS"] = combos
+    _runtime["COMBO_MAP"] = _build_combo_weight_map(combos)
 
 
 def get_weight_order() -> list[str]:
@@ -262,6 +517,44 @@ def get_weight_custom() -> list[dict]:
         if custom is None:
             custom = _config.get("WEIGHT_CUSTOM") or []
         return [dict(c) for c in custom]
+
+
+def get_weight_tags() -> list[dict]:
+    """当前生效的版本标签定义。"""
+    with _lock:
+        tags = _runtime.get("WEIGHT_TAGS")
+        if not tags:
+            tags = normalize_weight_tags(_config.get("WEIGHT_TAGS"))
+        return [dict(t) for t in tags]
+
+
+def get_weight_combos() -> list[dict]:
+    """当前生效的组合列表（顺序即优先级，高 -> 低）。"""
+    with _lock:
+        combos = _runtime.get("WEIGHT_COMBOS")
+        if not combos:
+            combos = normalize_weight_combos(
+                _config.get("WEIGHT_COMBOS"), get_weight_tags()
+            )
+        return [{"id": c["id"], "tags": list(c["tags"])} for c in combos]
+
+
+def get_combo_weight(combo_id: str) -> int:
+    """取某组合的权重值；未知组合回退为 0。"""
+    with _lock:
+        m = _runtime.get("COMBO_MAP")
+        if not m:
+            m = _build_combo_weight_map(get_weight_combos())
+        return int(m.get(str(combo_id or "").strip().lower(), 0))
+
+
+def combo_weight_map() -> dict:
+    """完整的「组合 id -> 权重」映射。"""
+    with _lock:
+        m = _runtime.get("COMBO_MAP")
+        if not m:
+            m = _build_combo_weight_map(get_weight_combos())
+        return dict(m)
 
 
 def get_weight_map() -> dict:
@@ -301,6 +594,18 @@ def normalize_config(cfg: dict) -> dict:
     # 先规范自定义档位，再据此补全顺序（顺序里可能含 custom:<id>）
     out["WEIGHT_CUSTOM"] = normalize_weight_custom(out.get("WEIGHT_CUSTOM"))
     out["WEIGHT_ORDER"] = normalize_weight_order(out.get("WEIGHT_ORDER"), out["WEIGHT_CUSTOM"])
+
+    # 自由组合权重：标签与组合（组合顺序即优先级）
+    out["WEIGHT_TAGS"] = normalize_weight_tags(out.get("WEIGHT_TAGS"))
+    out["WEIGHT_COMBOS"] = normalize_weight_combos(out.get("WEIGHT_COMBOS"), out["WEIGHT_TAGS"])
+
+    # 旧配置迁移：用户之前配过「自定义档位（关键字）」但还没配过「组合」时，
+    # 自动把档位转成「标签 + 组合」，保证升级后洗板行为不变。
+    # 已经配过组合的用户不会被覆盖。
+    if not (cfg or {}).get("WEIGHT_COMBOS") and out["WEIGHT_CUSTOM"]:
+        out["WEIGHT_TAGS"], out["WEIGHT_COMBOS"] = _migrate_custom_to_combos(
+            out["WEIGHT_CUSTOM"], out["WEIGHT_ORDER"]
+        )
 
     # 猎犬内容后缀：统一为小写带点的形式；空列表表示使用默认值
     out["HOUND_CONTENT_EXTS"] = normalize_ext_list(out.get("HOUND_CONTENT_EXTS"))

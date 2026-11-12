@@ -122,21 +122,63 @@ def extract_pure_fanhao(text: str, apply_ignore: bool = False) -> str:
     return raw
 
 
+def match_weight_tags(basename: str) -> set[str]:
+    """返回文件名命中的「版本标签」id 集合。
+
+    「普通」标签恒为真（作为兜底），其余标签按各自的
+    keywords（子串，不区分大小写）与 regex 判定。
+    """
+    lowered = basename.lower()
+    hit: set[str] = {config.NORMAL_TAG_ID}
+
+    for tag in config.get_weight_tags():
+        tid = str(tag.get("id") or "").strip()
+        if not tid or tid == config.NORMAL_TAG_ID:
+            continue
+
+        matched = False
+        for kw in tag.get("keywords") or []:
+            k = str(kw).strip().lower()
+            if k and k in lowered:
+                matched = True
+                break
+
+        if not matched:
+            rx = tag.get("regex") or ""
+            if rx:
+                try:
+                    if re.search(rx, basename, re.IGNORECASE):
+                        matched = True
+                except re.error:
+                    pass
+
+        if matched:
+            hit.add(tid)
+
+    return hit
+
+
+def match_weight_combo(basename: str) -> str | None:
+    """按组合列表顺序，返回第一个「标签全部命中」的组合 id。
+
+    组合内部是 AND 关系；因为「普通」恒为真，
+    所以只含「普通」的组合自然成为兜底档。
+    都不命中时返回 None。
+    """
+    hit = match_weight_tags(basename)
+    for combo in config.get_weight_combos():
+        tags = [str(t) for t in (combo.get("tags") or [])]
+        if tags and all(t in hit for t in tags):
+            return str(combo.get("id") or "")
+    return None
+
+
 def get_weight_and_fanhao(filename: str):
     """返回 (root_fanhao, weight, is_part)。
 
-    权重由「档位顺序」决定，可在前端拖动调整。
-    默认内置档位（高 -> 低）：UC > C > U > NORMAL，对应权重 3 / 2 / 1 / 0。
-
-    内置档位含义：
-        UC      = 中字 + 无码/破解（同时含 C 与 U 标记）
-        C       = 仅中字
-        U       = 仅无码/破解
-        NORMAL  = 普通，无上述标记
-
-    自定义档位（用户配置的一组关键字）与内置档位一起混排：
-        - 一个文件可能同时命中多个档位，**取顺序最高（权重最大）的那个**
-        - 自定义关键字不分大小写
+    权重由「自由组合」的列表顺序决定，可在前端拖动调整。
+    组合 = 若干版本标签的 AND（「普通」恒为真，用作兜底）。
+    默认组合 字幕+破解 / 字幕 / 破解 / 普通 等价于旧的 UC > C > U > 普通。
     """
     basename = os.path.splitext(filename)[0]
     canonical, raw, _ = parse_fanhao_info(basename)
@@ -144,34 +186,9 @@ def get_weight_and_fanhao(filename: str):
     if canonical:
         upper_base = basename.upper()
         is_part = bool(_PART_RE.search(upper_base))
-        has_c = bool(_HAS_C_RE.search(upper_base))
-        has_u = bool(_HAS_U_RE.search(upper_base))
 
-        # 计算该文件命中的所有档位
-        hits: list[str] = []
-        if has_c and has_u:
-            hits.append("UC")
-        if has_c:
-            hits.append("C")
-        if has_u:
-            hits.append("U")
-
-        # 自定义档位：任一关键字命中即算该档
-        lowered = basename.lower()
-        for c in config.get_weight_custom():
-            kws = c.get("keywords") or []
-            if any(str(k).strip() and str(k).strip().lower() in lowered for k in kws):
-                hits.append(config.CUSTOM_TIER_PREFIX + str(c.get("id")))
-
-        if not hits:
-            hits.append("NORMAL")
-
-        # 按当前拖动顺序取最优：order 越靠前权重越高
-        order = config.get_weight_order()
-        rank = {t: i for i, t in enumerate(order)}
-        best = min(hits, key=lambda t: rank.get(t, len(order)))
-
-        weight = config.get_weight_for_tier(best)
+        combo_id = match_weight_combo(basename)
+        weight = config.get_combo_weight(combo_id) if combo_id else 0
 
         root_fanhao = canonical if config.get_ignore_leading_digits() else raw
         return root_fanhao, weight, is_part

@@ -143,7 +143,7 @@ CSS = open(os.path.join(BASE, "app", "static", "css", "app.css"), encoding="utf-
 
 check("导航含洗版权重", 'data-view="washcfg"' in HTML)
 check("有 washcfg 视图", 'id="view-washcfg"' in HTML)
-check("洗版权重卡片在该视图内", "洗板权重顺序" in HTML)
+check("洗版权重卡片在该视图内", "自由组合权重" in HTML)
 check("存储路径卡片在该视图内", "💾 存储路径" in HTML)
 check("VIEW_META 含 washcfg", "washcfg:" in JS)
 

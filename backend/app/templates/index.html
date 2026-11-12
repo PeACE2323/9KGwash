@@ -302,31 +302,46 @@
         <section class="view" id="view-washcfg">
           <div class="card">
             <div class="card-head">
-              <h2>⚖️ 洗板权重顺序</h2>
+              <h2>⚖️ 自由组合权重</h2>
               <div class="head-tools">
                 <span class="status-msg" id="weight-msg"></span>
                 <button class="btn btn-ghost btn-sm" id="weight-reset">恢复默认</button>
               </div>
             </div>
             <p class="view-tip">
-              洗板对决时，<strong>排在上面的档位优先级更高</strong>，权重高者保留、低者被清理。
-              拖动卡片左侧 ⠿ 或点 ▲▼ 调整顺序，保存后<strong>实时生效</strong>。
+              先勾选下面的<strong>版本标签</strong>组成一个条件，再把组合拖到想要的优先级位置。
+              <strong>排在上面的组合权重更高</strong>，洗板时高权重保留、低者被清理。
               <br>
-              一个文件同时命中多个档位时，<strong>以排在最上面的那个档为准</strong>。
+              组合内部是<strong>同时满足</strong>关系（如「字幕 + 4K」要求既有字幕又是 4K）。
+              <strong>普通</strong>是兜底标签、恒为真，单独一条「普通」表示其他都没命中时的默认档。
             </p>
+
+            <div class="combo-builder">
+              <div class="combo-builder-head">
+                <span class="combo-builder-title">自由组合版本标签</span>
+              </div>
+              <div class="tag-grid" id="tag-grid"></div>
+              <div class="combo-add-row">
+                <button class="btn btn-primary btn-sm" id="combo-add">➕ 添加组合</button>
+                <span class="combo-preview" id="combo-preview">未选择标签</span>
+              </div>
+              <small class="field-hint">
+                可任意勾选标签生成组合；列表只显示已添加的组合，可移除或调整顺序。
+                鼠标悬停标签可查看它匹配的关键字。
+              </small>
+            </div>
+
+            <div class="combo-list-head">
+              <span class="combo-list-title">组合优先级（拖动排序）</span>
+              <span class="combo-list-hint">越靠上权重越高</span>
+            </div>
             <div id="weight-list" class="weight-list">
               <div class="empty-hint">正在读取权重配置...</div>
             </div>
 
-            <button class="btn btn-ghost btn-block" id="weight-add-custom" style="margin-top:10px">
-              ➕ 添加自定义档位（按关键字）
+            <button class="btn btn-primary btn-block" id="weight-save" style="margin-top:12px">
+              💾 保存组合优先级
             </button>
-            <button class="btn btn-primary btn-block" id="weight-save" style="margin-top:10px">
-              💾 保存权重顺序
-            </button>
-          </div>
-
-          <div class="card">
           </div>
         </section>
 
@@ -502,18 +517,12 @@
     <div class="weight-item" draggable="true">
       <span class="weight-grip" title="按住拖动调整优先级">⠿</span>
       <span class="weight-rank"></span>
-      <span class="weight-badge"></span>
-      <span class="weight-text">
-        <span class="weight-label"></span>
-        <span class="weight-desc"></span>
-        <span class="weight-kws"></span>
-      </span>
+      <span class="weight-tags"></span>
       <span class="weight-val"></span>
       <span class="weight-move">
         <button type="button" class="btn btn-ghost btn-xs weight-up" title="提高优先级">▲</button>
         <button type="button" class="btn btn-ghost btn-xs weight-down" title="降低优先级">▼</button>
-        <button type="button" class="btn btn-ghost btn-xs weight-edit" title="编辑该自定义档位">✏️</button>
-        <button type="button" class="btn btn-ghost btn-xs weight-del" title="删除该自定义档位">✕</button>
+        <button type="button" class="btn btn-ghost btn-xs weight-del" title="删除该组合">✕</button>
       </span>
     </div>
   </template>

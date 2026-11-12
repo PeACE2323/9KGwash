@@ -176,6 +176,33 @@ def get_weight_order():
                 }
             )
 
+    # 自由组合权重：标签 + 组合（顺序即优先级）
+    tags = config.get_weight_tags()
+    combos = config.get_weight_combos()
+    cmap = config.combo_weight_map()
+    tag_name = {t["id"]: t["name"] for t in tags}
+
+    tags_out = [
+        {
+            "id": t["id"],
+            "name": t["name"],
+            "keywords": list(t.get("keywords") or []),
+            "regex": t.get("regex") or "",
+            "is_normal": t["id"] == config.NORMAL_TAG_ID,
+        }
+        for t in tags
+    ]
+
+    combos_out = [
+        {
+            "id": c["id"],
+            "tags": list(c["tags"]),
+            "labels": [tag_name.get(x, x) for x in c["tags"]],
+            "weight": cmap.get(c["id"], 0),
+        }
+        for c in combos
+    ]
+
     return jsonify(
         {
             "success": True,
@@ -184,25 +211,78 @@ def get_weight_order():
             "tiers": tiers,
             "custom": custom,
             "default_order": config.DEFAULT_WEIGHT_ORDER,
+            # 自由组合权重
+            "tags": tags_out,
+            "combos": combos_out,
+            "default_tags": [dict(t) for t in config.DEFAULT_WEIGHT_TAGS],
+            "default_combos": [dict(c) for c in config.DEFAULT_WEIGHT_COMBOS],
         }
     )
 
 
 @bp.route("/api/weight", methods=["POST"])
 def update_weight_order():
-    """保存权重档位顺序与自定义档位（实时生效，无需重启）。
+    """保存权重配置（实时生效，无需重启）。
 
-    请求体：
+    支持两种请求体：
+
+    1) 自由组合模式（新，推荐）：
+        tags    版本标签数组（可选；传了则整体替换）
+        combos  组合数组，顺序即优先级（高 -> 低）
+
+    2) 旧档位模式（兼容保留）：
         order   档位顺序数组（可含内置档与 custom:<id>）
         custom  自定义档位数组（可选；传了则整体替换）
     """
     try:
         data = request.get_json(silent=True) or {}
+
+        # ---------------- 自由组合模式 ----------------
+        if isinstance(data.get("combos"), list):
+            payload: dict = {}
+
+            if isinstance(data.get("tags"), list):
+                payload["WEIGHT_TAGS"] = config.normalize_weight_tags(data.get("tags"))
+                tags = payload["WEIGHT_TAGS"]
+            else:
+                tags = config.get_weight_tags()
+
+            combos = config.normalize_weight_combos(data.get("combos"), tags)
+            if not combos:
+                return jsonify({"success": False, "error": "至少保留一个组合"}), 400
+            payload["WEIGHT_COMBOS"] = combos
+
+            ok, res = config.save_config(payload)
+            if not ok:
+                return jsonify({"success": False, "error": str(res)}), 500
+
+            config.reload_config()
+
+            cmap = config.combo_weight_map()
+            tag_name = {t["id"]: t["name"] for t in config.get_weight_tags()}
+            logger.info(
+                "⚖️ [权重] 组合顺序已更新为 "
+                + " > ".join(
+                    "+".join(tag_name.get(x, x) for x in c["tags"]) for c in combos
+                )
+                + " | 权重值 "
+                + ", ".join(f"{k}={v}" for k, v in cmap.items())
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "tags": config.get_weight_tags(),
+                    "combos": config.get_weight_combos(),
+                    "weights": cmap,
+                }
+            )
+
+        # ---------------- 旧档位模式（兼容） ----------------
         raw = data.get("order")
         if not isinstance(raw, list) or not raw:
             return jsonify({"success": False, "error": "order 必须是非空数组"}), 400
 
-        payload: dict = {}
+        payload = {}
 
         # 自定义档位先落地，顺序规范化需要知道有哪些自定义档
         if "custom" in data:

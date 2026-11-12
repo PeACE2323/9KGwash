@@ -172,7 +172,7 @@ check("存储路径在运行配置页", "💾 存储路径" in cfg_block)
 i_wash = HTML.find('id="view-washcfg"')
 wash_block = HTML[i_wash : HTML.find("</section>", i_wash)]
 check("洗版权重页不再有存储路径", "存储路径" not in wash_block)
-check("洗版权重页仍有权重卡片", "洗板权重顺序" in wash_block)
+check("洗版权重页仍有权重卡片", "自由组合权重" in wash_block)
 
 # 下拉框不重叠
 check("select 有右侧内边距", "padding-right: 32px" in CSS)

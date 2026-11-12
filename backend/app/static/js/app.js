@@ -33,7 +33,12 @@
     loaded: { overview: false, hound: false, dedup: false, deliver: false },
     deliver: null, // 当前投递配置
     weightDefault: [], // 权重默认顺序（用于一键恢复）
-    weightCustom: [], // 自定义权重档位
+    weightCustom: [], // 自定义权重档位（旧模型，保留兼容）
+    weightTags: [], // 版本标签定义
+    weightCombos: [], // 组合列表（顺序即优先级）
+    weightDefaultTags: [], // 默认标签（恢复默认用）
+    weightDefaultCombos: [], // 默认组合（恢复默认用）
+    selectedTags: new Set(), // 当前勾选的标签 id
     lastStatus: null, // 最近一次 /api/status 结果（路径表单与浏览起点会用到）
   };
 
@@ -259,71 +264,152 @@
     });
   }
 
-  function renderWeights(data) {
+  /* --------------------- 洗版权重：自由组合 --------------------- */
+  const NORMAL_TAG = "normal";
+
+  function tagName(id) {
+    const t = (state.weightTags || []).find((x) => x.id === id);
+    return t ? t.name : id;
+  }
+
+  function renderTagGrid() {
+    const box = $("tag-grid");
+    if (!box) return;
+    box.innerHTML = "";
+    (state.weightTags || []).forEach((t) => {
+      const label = document.createElement("label");
+      label.className = "tag-check" + (t.is_normal ? " is-normal" : "");
+      label.title = t.is_normal
+        ? "兜底标签：恒为真，用于「其他都没命中」的默认档"
+        : (t.keywords && t.keywords.length ? t.keywords.join(" / ") : (t.regex || "无匹配规则"));
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = t.id;
+      cb.checked = state.selectedTags.has(t.id);
+      label.classList.toggle("is-checked", cb.checked);
+      cb.addEventListener("change", () => {
+        if (cb.checked) state.selectedTags.add(t.id);
+        else state.selectedTags.delete(t.id);
+        label.classList.toggle("is-checked", cb.checked);
+        updateComboPreview();
+      });
+
+      const span = document.createElement("span");
+      span.textContent = t.name;
+
+      label.appendChild(cb);
+      label.appendChild(span);
+      box.appendChild(label);
+    });
+  }
+
+  function updateComboPreview() {
+    const el = $("combo-preview");
+    if (!el) return;
+    const sel = (state.weightTags || [])
+      .filter((t) => state.selectedTags.has(t.id))
+      .map((t) => t.name);
+    el.textContent = sel.length ? "添加组合：" + sel.join(" + ") : "未选择标签";
+    el.classList.toggle("is-empty", !sel.length);
+    const btn = $("combo-add");
+    if (btn) btn.disabled = !sel.length;
+  }
+
+  function renderComboList() {
     const list = $("weight-list");
     const tpl = $("weight-tpl");
+    if (!list || !tpl) return;
     list.innerHTML = "";
 
-    // 记住最新的自定义档位，供保存时一起提交
-    state.weightCustom = (data.custom || []).slice();
-
-    const tiers = data.tiers || [];
-    if (!tiers.length) {
-      list.innerHTML = '<div class="empty-hint">没有可用的权重档位</div>';
+    if (!(state.weightCombos || []).length) {
+      list.innerHTML =
+        '<div class="empty-hint">还没有任何组合，请先勾选标签并点「添加组合」。</div>';
       return;
     }
 
-    tiers.forEach((t) => {
+    state.weightCombos.forEach((c, idx) => {
       const node = tpl.content.firstElementChild.cloneNode(true);
-      node.dataset.tier = t.key;
-      node.dataset.customId = t.custom_id || "";
+      node.dataset.comboIdx = String(idx);
 
-      const isCustom = !!t.is_custom;
-      const [badgeText, badgeCls] = isCustom
-        ? ["自定义", "w-badge-custom"]
-        : WEIGHT_BADGE[t.key] || [t.key, "w-badge-normal"];
-      const badgeEl = node.querySelector(".weight-badge");
-      badgeEl.textContent = badgeText;
-      badgeEl.className = "weight-badge " + badgeCls;
-
-      node.querySelector(".weight-label").textContent = t.label || t.key;
-      node.querySelector(".weight-desc").textContent = t.desc || "";
-
-      // 自定义档位额外展示关键字小标签
-      const kwsEl = node.querySelector(".weight-kws");
-      if (isCustom && t.keywords && t.keywords.length) {
-        kwsEl.replaceChildren();
-        t.keywords.forEach((k) => {
-          const chip = document.createElement("span");
-          chip.className = "kw-mini";
-          chip.textContent = k;
-          kwsEl.appendChild(chip);
-        });
-      } else {
-        kwsEl.remove();
-      }
-
-      node.classList.toggle("is-custom", isCustom);
-
-      // 编辑/删除按钮只对自定义档位显示
-      const editBtn = node.querySelector(".weight-edit");
-      const delBtn = node.querySelector(".weight-del");
-      if (isCustom) {
-        editBtn.addEventListener("click", () => openWeightModal(t.custom_id));
-        delBtn.addEventListener("click", () => removeCustomTier(node));
-      } else {
-        editBtn.remove();
-        delBtn.remove();
-      }
+      const tagsEl = node.querySelector(".weight-tags");
+      tagsEl.replaceChildren();
+      (c.tags || []).forEach((tid, i) => {
+        if (i > 0) {
+          const plus = document.createElement("span");
+          plus.className = "wplus";
+          plus.textContent = "+";
+          tagsEl.appendChild(plus);
+        }
+        const chip = document.createElement("span");
+        chip.className = "wtag" + (tid === NORMAL_TAG ? " is-normal" : "");
+        chip.textContent = tagName(tid);
+        tagsEl.appendChild(chip);
+      });
 
       node.querySelector(".weight-up").addEventListener("click", () => moveWeight(node, -1));
       node.querySelector(".weight-down").addEventListener("click", () => moveWeight(node, 1));
+      node.querySelector(".weight-del").addEventListener("click", () => removeCombo(node));
 
       list.appendChild(node);
     });
 
     refreshWeightRanks();
     enableWeightDrag();
+  }
+
+  /** 按 DOM 当前顺序收集组合（拖动后顺序会变） */
+  function collectCombos() {
+    return [...document.querySelectorAll("#weight-list .weight-item")]
+      .map((node) => Number(node.dataset.comboIdx))
+      .filter((i) => !Number.isNaN(i) && state.weightCombos[i])
+      .map((i) => ({
+        id: state.weightCombos[i].id || "",
+        tags: state.weightCombos[i].tags.slice(),
+      }));
+  }
+
+  function addCombo() {
+    const tags = (state.weightTags || [])
+      .filter((t) => state.selectedTags.has(t.id))
+      .map((t) => t.id);
+    if (!tags.length) {
+      toast("请先勾选至少一个标签");
+      return;
+    }
+    const key = tags.slice().sort().join(",");
+    if ((state.weightCombos || []).some((c) => c.tags.slice().sort().join(",") === key)) {
+      toast("该组合已存在");
+      return;
+    }
+    state.weightCombos.push({ id: "", tags });
+    state.selectedTags.clear();
+    renderTagGrid();
+    renderComboList();
+    updateComboPreview();
+    weightMsg("组合已添加，记得保存", "busy");
+  }
+
+  function removeCombo(node) {
+    const idx = Number(node.dataset.comboIdx);
+    if (Number.isNaN(idx) || !state.weightCombos[idx]) return;
+    state.weightCombos.splice(idx, 1);
+    renderComboList();
+    weightMsg("组合已移除，记得保存", "busy");
+  }
+
+  function renderWeights(data) {
+    state.weightTags = (data.tags || []).slice();
+    state.weightCombos = (data.combos || []).map((c) => ({
+      id: c.id,
+      tags: (c.tags || []).slice(),
+    }));
+    state.weightDefaultTags = (data.default_tags || []).slice();
+    state.weightDefaultCombos = (data.default_combos || []).slice();
+    state.selectedTags = new Set();
+    renderTagGrid();
+    renderComboList();
+    updateComboPreview();
   }
 
   /* ------------------- 自定义权重档位 ------------------- */
@@ -520,35 +606,34 @@
   }
 
   async function saveWeights() {
-    const order = collectWeightOrder();
-    if (!order.length) return;
+    const combos = collectCombos();
+    if (!combos.length) {
+      weightMsg("❌ 至少保留一个组合", "err");
+      return;
+    }
     weightMsg("正在保存...", "busy");
     try {
       const res = await api("/api/weight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          order,
-          // 自定义档位一并提交（临时 id 由后端重新分配）
-          custom: (state.weightCustom || []).map((c) => ({
-            id: c.id,
-            name: c.name,
-            keywords: c.keywords || [],
+          tags: (state.weightTags || []).map((t) => ({
+            id: t.id,
+            name: t.name,
+            keywords: t.keywords || [],
+            regex: t.regex || "",
           })),
+          combos,
         }),
       });
       if (res.success) {
+        const names = (res.combos || []).map((c) =>
+          (c.tags || []).map(tagName).join(" + ")
+        );
+        toast("权重已更新：" + names.join(" > "));
+        // 先刷新列表，再写成功提示，避免被 loadWeights 里的清空覆盖
+        await loadWeights();
         weightMsg("✅ 已保存并实时生效", "ok");
-        const names = res.order.map((k) => {
-          if (k.startsWith("custom:")) {
-            const id = k.slice("custom:".length);
-            const c = (res.custom || []).find((x) => x.id === id);
-            return c ? c.name : "自定义";
-          }
-          return k;
-        });
-        toast("权重顺序已更新：" + names.join(" > "));
-        loadWeights();
       } else {
         weightMsg("❌ " + (res.error || "保存失败"), "err");
       }
@@ -2332,20 +2417,27 @@
     $("theme-toggle").addEventListener("click", toggleTheme);
     $("weight-save").addEventListener("click", saveWeights);
     $("weight-reset").addEventListener("click", async () => {
-      const def = state.weightDefault && state.weightDefault.length
-        ? state.weightDefault
-        : ["UC", "C", "U", "NORMAL"];
+      const tags = state.weightDefaultTags && state.weightDefaultTags.length
+        ? state.weightDefaultTags
+        : null;
+      const combos = state.weightDefaultCombos && state.weightDefaultCombos.length
+        ? state.weightDefaultCombos
+        : null;
+      if (!combos) {
+        toast("默认配置缺失，请刷新页面");
+        return;
+      }
       await api("/api/weight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order: def }),
+        body: JSON.stringify(tags ? { tags, combos } : { combos }),
       });
-      toast("已恢复默认权重顺序");
+      toast("已恢复默认组合");
       loadWeights();
     });
 
     // 自定义权重档位
-    $("weight-add-custom").addEventListener("click", () => openWeightModal(null));
+    $("combo-add").addEventListener("click", addCombo);
     $("weight-modal-cancel").addEventListener("click", closeWeightModal);
     $("weight-modal-ok").addEventListener("click", confirmWeightModal);
     $("weight-modal").addEventListener("click", (e) => {
