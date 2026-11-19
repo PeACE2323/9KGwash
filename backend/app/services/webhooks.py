@@ -15,7 +15,7 @@ import requests
 
 from .. import config
 from ..logging_setup import categorized
-from ..services import fs, history, washer
+from ..services import fs, history, meta_backup, washer
 from ..services.fanhao import get_weight_and_fanhao, is_jav, parse_fanhao_info
 
 # 本模块日志统一打上分类标签，供前端「活动日志」按标签页筛选
@@ -185,6 +185,41 @@ def handle_cd2(payload) -> None:
 # ---------------------------------------------------------------------------
 # Emby 删除通知中转
 # ---------------------------------------------------------------------------
+def _drop_backup_for_deleted(item_path: str, item_name: str, fanhao: str, basename: str) -> None:
+    """影片被真正删除时，把元数据备份里对应的那份快照也删掉。
+
+    内部用 ``require_missing=True``：只有元数据目录确实已经不存在才删，
+    避免刮削重建目录的瞬间把还需要的快照误删。
+    """
+    if not meta_backup.is_enabled():
+        return
+    label = basename or item_name
+    r: dict = {}
+    # Emby 有时先发通知、再删文件，这里给最多 ~5 秒的宽限，
+    # 等元数据目录真的消失后再确认「确实删了」。
+    for attempt in range(3):
+        try:
+            r = meta_backup.drop_for_deleted_item(
+                item_path, item_name=basename or item_name, fanhao=fanhao
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"🗂️ [备份清理] ❌ 异常: {e}")
+            return
+        if r.get("ok"):
+            logger.info(
+                f"🗂️ [备份清理] 影片 {label} 已确认真实删除，"
+                f"同步删除备份快照: {r.get('removed') or r.get('dir') or ''}"
+            )
+            return
+        if r.get("reason") != "kept":
+            break
+        if attempt < 2:
+            time.sleep(1.5)
+
+    if r.get("reason") not in ("disabled", "no_backup", "kept"):
+        logger.warning(f"🗂️ [备份清理] ⚠️ 跳过（{r.get('reason')}）: {label}")
+
+
 def handle_emby(payload, incoming_headers) -> tuple[str, str]:
     """返回 (判定结果, 说明)，判定结果用于 HTTP 响应体。"""
     if not payload:
@@ -212,6 +247,7 @@ def handle_emby(payload, incoming_headers) -> tuple[str, str]:
 
         if not is_jav(canonical_fanhao):
             logger.info(f"⚠️ [放行] 欧美/非 JAV 影片 {basename} 被删，正常放行转发。")
+            _drop_backup_for_deleted(item_path, item_name, canonical_fanhao, basename)
         else:
             hist = history.purge_expired()
 
@@ -240,6 +276,7 @@ def handle_emby(payload, incoming_headers) -> tuple[str, str]:
                 return "Phantom Deletion Ignored", "本地目录仍存在"
 
             logger.info("✅ [核实真删] 本地关联目录确已消失。确认为真实手动删除事件，予以放行转发。")
+            _drop_backup_for_deleted(item_path, item_name, canonical_fanhao, basename)
 
             if config.get_ignore_leading_digits() and raw_fanhao != canonical_fanhao:
                 if isinstance(payload.get("Item"), dict):

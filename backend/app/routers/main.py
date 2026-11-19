@@ -619,6 +619,25 @@ def path_check():
 # ---------------------------------------------------------------------------
 # 元数据备份 / 回滚
 # ---------------------------------------------------------------------------
+def _resolve_meta_target(raw) -> str:
+    """把接口参数里的目录解析成元数据目录的路径。
+
+    注意：``/STRM/ABP-100`` 这种写法在 Windows 上会被 ``os.path.isabs``
+    判成绝对路径（根目录相对），但它其实是「相对元数据根」的意思，
+    这里统一按元数据根拼接；只有带盘符的真·绝对路径才原样返回。
+    """
+    p = _norm_cfg_path(raw)
+    if not p:
+        return ""
+    base = config.metadata_base_path().replace("\\", "/").rstrip("/")
+    q = p.replace("\\", "/")
+    if base and (q == base or q.lower().startswith(base.lower() + "/")):
+        return q
+    if os.path.splitdrive(q)[0]:
+        return q
+    return os.path.join(config.metadata_base_path(), p.lstrip("/\\"))
+
+
 @bp.route("/api/meta_backup/status", methods=["GET"])
 def api_meta_backup_status():
     """备份功能状态：是否启用、目录规模、最近一次同步结果。"""
@@ -639,11 +658,9 @@ def api_meta_backup_backup():
     请求体：{"dir": "<元数据目录绝对路径>"}（相对路径按元数据根解析）
     """
     data = request.get_json(silent=True) or {}
-    target = _norm_cfg_path(data.get("dir"))
+    target = _resolve_meta_target(data.get("dir"))
     if not target:
         return jsonify({"success": False, "error": "缺少 dir 参数"}), 400
-    if not os.path.isabs(target):
-        target = os.path.join(config.metadata_base_path(), target.lstrip("/\\"))
     result = meta_backup.backup_one(target)
     return jsonify({"success": result.get("ok"), **result}), (200 if result.get("ok") else 400)
 
@@ -652,12 +669,28 @@ def api_meta_backup_backup():
 def api_meta_backup_restore():
     """手动用备份目录覆盖回单个元数据目录（会覆盖海报/nfo）。"""
     data = request.get_json(silent=True) or {}
-    target = _norm_cfg_path(data.get("dir"))
+    target = _resolve_meta_target(data.get("dir"))
     if not target:
         return jsonify({"success": False, "error": "缺少 dir 参数"}), 400
-    if not os.path.isabs(target):
-        target = os.path.join(config.metadata_base_path(), target.lstrip("/\\"))
     result = meta_backup.restore_one(target)
+    return jsonify({"success": result.get("ok"), **result}), (200 if result.get("ok") else 400)
+
+
+@bp.route("/api/meta_backup/prune", methods=["POST"])
+def api_meta_backup_prune():
+    """清理孤儿备份：备份里有、元数据根目录里已经不存在的整份删掉。"""
+    result = meta_backup.prune_orphans()
+    return jsonify({"success": result.get("ok"), **result}), (200 if result.get("ok") else 400)
+
+
+@bp.route("/api/meta_backup/drop", methods=["POST"])
+def api_meta_backup_drop():
+    """手动删除单个元数据目录对应的备份快照（默认只删元数据目录已不存在的）。"""
+    data = request.get_json(silent=True) or {}
+    target = _resolve_meta_target(data.get("dir"))
+    if not target:
+        return jsonify({"success": False, "error": "缺少 dir 参数"}), 400
+    result = meta_backup.drop_one(target, require_missing=bool(data.get("require_missing", True)))
     return jsonify({"success": result.get("ok"), **result}), (200 if result.get("ok") else 400)
 
 

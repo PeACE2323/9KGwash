@@ -1519,11 +1519,13 @@
       const sizeEl = $("bk-size");
       const lastEl = $("bk-last");
       const syncBtn = $("bk-sync");
+      const pruneBtn = $("bk-prune");
       const hint = $("cfg-backup-hint");
 
       if (filesEl) filesEl.textContent = st.files || 0;
       if (sizeEl) sizeEl.textContent = fmtBytes(st.bytes);
       if (syncBtn) syncBtn.disabled = !st.enabled || !!st.conflict;
+      if (pruneBtn) pruneBtn.disabled = !st.enabled || !!st.conflict || !st.dirs;
 
       if (lastEl) {
         const ls = st.last_sync || {};
@@ -1597,6 +1599,32 @@
       }
     } catch (e) {
       bkMsg("同步失败：" + e.message, "bad");
+    } finally {
+      btn.textContent = old;
+      await loadBackupStatus();
+    }
+  }
+
+  async function pruneBackup() {
+    const btn = $("bk-prune");
+    if (!btn) return;
+    if (!confirm("清理孤儿备份？\n\n会删掉「备份里有、元数据目录里已经不存在」的那一份。\n元数据目录里还在的影片不受影响。")) {
+      return;
+    }
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "⏳ 清理中…";
+    bkMsg("正在清理孤儿备份…");
+    try {
+      const data = await apiPost("/api/meta_backup/prune", {});
+      if (data.ok) {
+        bkMsg(data.message || "清理完成", "ok");
+        toast(data.message || "清理完成");
+      } else {
+        bkMsg(data.message || "清理失败", "bad");
+      }
+    } catch (e) {
+      bkMsg("清理失败：" + e.message, "bad");
     } finally {
       btn.textContent = old;
       await loadBackupStatus();
@@ -2722,6 +2750,7 @@
     // 元数据备份
     if ($("bk-save")) $("bk-save").addEventListener("click", saveBackupPath);
     if ($("bk-sync")) $("bk-sync").addEventListener("click", syncBackup);
+    if ($("bk-prune")) $("bk-prune").addEventListener("click", pruneBackup);
     if ($("bk-refresh")) $("bk-refresh").addEventListener("click", loadBackupStatus);
 
     // 委托：点击带 data-copy 的元素即复制

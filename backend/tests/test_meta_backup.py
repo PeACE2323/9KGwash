@@ -12,12 +12,14 @@
   ① 只有一个版本（无需洗板）      -> 把新影片的元数据写入备份
   ② 洗板后新版本胜出（触发文件没被删）-> 把当前元数据覆盖到备份
   ③ 洗板后新版本落败（触发文件被删）  -> 用备份把旧元数据还原回去
+  ④ 影片被真正删除（Emby 手动删）      -> 备份里对应的那份也一起删掉
 
 备份范围：图片 + nfo + json + 字幕；**不含 .strm**（由 CMS 生成）。
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -355,6 +357,115 @@ check("未启用时不创建备份目录", not os.path.isdir(BACKUP))
 client.post("/api/config", json={"META_BACKUP_PATH": BACKUP.replace("\\", "/")})
 
 # ===========================================================================
+print("\n=== L. Emby 手动删除影片 -> 同步删除备份 ===")
+
+
+@contextlib.contextmanager
+def fast_emby():
+    """跳过 handle_emby 里 2.5 秒的「幽灵删除」等待，避免测试变慢。"""
+    orig = time.sleep
+    webhooks.time.sleep = lambda *_a, **_k: None
+    try:
+        yield
+    finally:
+        webhooks.time.sleep = orig
+
+
+def emby_deleted(path, name):
+    payload = {
+        "Event": "library.deleted",
+        "Item": {"Type": "Movie", "Path": path, "Name": name},
+    }
+    with fast_emby():
+        r = client.post("/emby_webhook", json=payload)
+    return r.get_data(as_text=True)
+
+
+# L1：JAV 影片真实删除 -> 备份快照一起删掉
+reset()
+mk_meta("ABP-800", ["ABP-800.nfo", "ABP-800.strm", "poster.jpg"])
+meta_backup.sync_all()
+bk800 = os.path.join(BACKUP, "STRM", "ABP-800")
+check("快照已建立", os.path.isdir(bk800), bk800)
+strm800 = os.path.join(META, "ABP-800", "ABP-800.strm")
+shutil.rmtree(os.path.join(META, "ABP-800"))  # Emby 删影片时连元数据目录一起删
+body = emby_deleted(strm800, "ABP-800")
+check("删除事件被放行转发", "Forwarded" in body, body)
+check("备份快照已同步删除", not os.path.isdir(bk800), bk800)
+check("备份根目录本身不会被删掉", os.path.isdir(BACKUP))
+
+# L2：幽灵删除（文件还在）-> 备份不动
+reset()
+mk_meta("ABP-801", ["ABP-801.nfo", "ABP-801.strm", "poster.jpg"])
+meta_backup.sync_all()
+bk801 = os.path.join(BACKUP, "STRM", "ABP-801")
+body = emby_deleted(os.path.join(META, "ABP-801", "ABP-801.strm"), "ABP-801")
+check("文件还在时判定为幽灵删除", "Phantom" in body, body)
+check("幽灵删除不动备份", os.path.isdir(bk801), bk801)
+
+# L3：非 JAV 影片被删 -> 也清理备份
+reset()
+mk_meta("Some Movie 2020", ["Some Movie 2020.nfo", "poster.jpg"])
+meta_backup.sync_all()
+bk_west = os.path.join(BACKUP, "STRM", "Some Movie 2020")
+check("非 JAV 快照已建立", os.path.isdir(bk_west), bk_west)
+shutil.rmtree(os.path.join(META, "Some Movie 2020"))
+body = emby_deleted(os.path.join(META, "Some Movie 2020", "Some Movie 2020.strm"), "Some Movie 2020")
+check("非 JAV 影片被删也清理备份", not os.path.isdir(bk_west), bk_west)
+
+# L4：drop_one 的安全限制
+reset()
+mk_meta("ABP-802", ["ABP-802.nfo", "poster.jpg"])
+meta_backup.sync_all()
+check("不允许删除备份根目录",
+      meta_backup.drop_one(METAROOT).get("reason") == "root")
+check("元数据目录还在时不删快照",
+      meta_backup.drop_one(os.path.join(META, "ABP-802")).get("reason") == "kept")
+check("不在元数据根下的目录无法映射",
+      meta_backup.drop_one(os.path.join(TMP, "elsewhere")).get("reason") == "unmapped")
+check("没有备份时返回 no_backup",
+      meta_backup.drop_one(os.path.join(META, "NOPE-999")).get("reason") == "no_backup")
+check("强制删除可以越过 require_missing",
+      meta_backup.drop_one(os.path.join(META, "ABP-802"), require_missing=False).get("ok") is True)
+check("强制删除后快照确实没了",
+      not os.path.isdir(os.path.join(BACKUP, "STRM", "ABP-802")))
+
+# L5：没配 Path 时按番号兜底
+reset()
+mk_meta("ABP-803", ["ABP-803.nfo", "poster.jpg"])
+meta_backup.sync_all()
+shutil.rmtree(os.path.join(META, "ABP-803"))
+r = meta_backup.drop_for_deleted_item("", item_name="ABP-803", fanhao="ABP-803")
+check("按番号兜底找到并删除", r.get("ok") is True, r)
+check("兜底删除后快照确实没了",
+      not os.path.isdir(os.path.join(BACKUP, "STRM", "ABP-803")))
+
+# ===========================================================================
+print("\n=== M. 清理孤儿备份 prune_orphans ===")
+reset()
+mk_meta("ABP-810", ["ABP-810.nfo", "poster.jpg"])
+mk_meta("ABP-811", ["ABP-811.nfo", "poster.jpg"])
+meta_backup.sync_all()
+shutil.rmtree(os.path.join(META, "ABP-810"))
+r = meta_backup.prune_orphans()
+check("清理成功", r.get("ok") is True, r)
+check("孤儿备份被删除", not os.path.isdir(os.path.join(BACKUP, "STRM", "ABP-810")))
+check("仍在的影片备份保留", os.path.isdir(os.path.join(BACKUP, "STRM", "ABP-811")))
+check("清理数量正确", r.get("removed") == 1, r.get("removed"))
+
+shutil.rmtree(METAROOT)
+r = meta_backup.prune_orphans()
+check("元数据根不存在时拒绝清理", r.get("ok") is False, r)
+check("拒绝清理时备份原样保留", os.path.isdir(os.path.join(BACKUP, "STRM", "ABP-811")))
+
+os.makedirs(os.path.join(META, "ABP-811"), exist_ok=True)
+r = client.post("/api/meta_backup/prune").get_json()
+check("prune 接口可用", r.get("ok") is True, r)
+r = client.post("/api/meta_backup/drop", json={"dir": "STRM/ABP-811"}).get_json()
+check("drop 接口：元数据目录还在时拒绝",
+      r.get("success") is False and r.get("reason") == "kept", r)
+
+# ===========================================================================
 print("\n=== K. 前端结构 ===")
 HTML = open(os.path.join(BASE, "app", "templates", "index.html"), encoding="utf-8").read()
 JS = open(os.path.join(BASE, "app", "static", "js", "app.js"), encoding="utf-8").read()
@@ -363,9 +474,11 @@ CSS = open(os.path.join(BASE, "app", "static", "css", "app.css"), encoding="utf-
 check("运行配置页有备份目录输入", 'id="cfg-backup"' in HTML)
 check("有「立即同步」按钮", 'id="bk-sync"' in HTML)
 check("有「保存备份目录」按钮", 'id="bk-save"' in HTML)
+check("有「清理孤儿备份」按钮", 'id="bk-prune"' in HTML)
 check("有状态展示区", 'id="bk-status"' in HTML and 'id="bk-files"' in HTML)
 check("说明里写清不含 strm", "不含 .strm" in HTML)
 check("JS 实现同步逻辑", "async function syncBackup" in JS)
+check("JS 实现清理逻辑", "async function pruneBackup" in JS)
 check("JS 实现状态刷新", "async function loadBackupStatus" in JS)
 check("切换视图时加载备份状态", "loadBackupStatus();" in JS)
 check("CSS 有备份样式", ".bk-actions" in CSS and ".bk-status" in CSS)

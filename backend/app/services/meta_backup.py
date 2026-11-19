@@ -16,6 +16,9 @@
   1. 只有一个版本（无需洗板）→ 把新影片的元数据**写入**备份；
   2. 洗板后新版本胜出（触发文件没被删）→ 把当前元数据**覆盖**到备份；
   3. 洗板后新版本落败（触发文件被删）→ 把备份里的元数据**回滚**到元数据目录。
+* 影片被真正删除时，备份里对应的那份也要**跟着删掉**，否则快照会不断膨胀：
+  - Emby 手动删除影片（`library.deleted` 事件）→ 按事件里的路径精确删除；
+  - 容器停机期间发生的删除 → 用「🧹 清理孤儿备份」扫描一次补齐。
 
 备份范围
 --------
@@ -355,6 +358,259 @@ def restore_after_wash(meta_dir: str, skip_basenames=None) -> dict:
         }.get(r["reason"], r["reason"])
         logger.warning(f"   [💾 回滚] ⚠️ {reason}: {meta_dir}")
     return r
+
+
+# ---------------------------------------------------------------------------
+# 删除备份：影片真的没了，快照也要跟着没
+# ---------------------------------------------------------------------------
+
+# 系统残留目录，遍历时一律跳过
+_SYSTEM_DIRS = ("@eaDir", "#recycle", ".@__thumb")
+
+
+def _inside_backup(path: str) -> bool:
+    """路径是否严格位于备份根目录内部（不含根目录本身）。"""
+    root = _abspath(backup_root())
+    p = _abspath(path)
+    if not root or not p:
+        return False
+    if p == root:
+        return False
+    return p.startswith(root + os.sep) or p.startswith(root + "/")
+
+
+def _prune_empty_parents(start: str) -> None:
+    """删完子目录后，把变空的父目录一路删掉，但不越过备份根。"""
+    root = _abspath(backup_root())
+    cur = _abspath(start)
+    while cur and cur != root and _inside_backup(cur):
+        try:
+            if os.listdir(cur):
+                return
+            os.rmdir(cur)
+        except OSError:
+            return
+        cur = _abspath(os.path.dirname(cur))
+
+
+def drop_one(meta_dir: str, require_missing: bool = True) -> dict:
+    """删除备份目录里与某个元数据目录对应的那份快照。
+
+    ``require_missing=True``（默认）时，只有**元数据目录已经不存在**才删，
+    避免刮削重建目录的瞬间把还需要的快照误删。
+    """
+    res = {"ok": False, "dir": meta_dir, "reason": "", "removed": ""}
+    if not is_enabled():
+        res["reason"] = "disabled"
+        return res
+    conflict = _backup_root_conflict()
+    if conflict:
+        res["reason"] = conflict
+        return res
+
+    rel = rel_meta(meta_dir)
+    if rel is None:
+        res["reason"] = "unmapped"
+        return res
+    if not rel:
+        # 元数据根目录本身，绝不整体删除
+        res["reason"] = "root"
+        return res
+
+    dst = backup_dir_for(meta_dir)
+    if not dst or not _inside_backup(dst):
+        res["reason"] = "unmapped"
+        return res
+    if not os.path.isdir(dst):
+        res["reason"] = "no_backup"
+        return res
+    if require_missing and os.path.isdir(meta_dir):
+        res["reason"] = "kept"
+        return res
+
+    with _LOCK:
+        try:
+            shutil.rmtree(dst)
+        except OSError as e:  # noqa: BLE001
+            res["reason"] = f"error: {e}"
+            return res
+        _prune_empty_parents(os.path.dirname(dst))
+
+    res["ok"] = True
+    res["removed"] = dst
+    return res
+
+
+def drop_by_fanhao(fanhao: str, require_missing: bool = True) -> dict:
+    """兜底：在备份树里按目录名包含的番号找到快照并删除。
+
+    只有在拿不到准确路径（Emby 事件里没带 Path）时才用。
+    """
+    key = str(fanhao or "").strip().lower()
+    res = {"ok": False, "reason": "", "removed": 0, "dirs": []}
+    if not is_enabled():
+        res["reason"] = "disabled"
+        return res
+    if not key:
+        res["reason"] = "no_key"
+        return res
+    root = backup_root()
+    meta_root = config.metadata_base_path()
+    if not root or not os.path.isdir(root):
+        res["reason"] = "no_backup"
+        return res
+
+    hits: list[str] = []
+    for cur, dirs, _files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _SYSTEM_DIRS]
+        base = os.path.basename(cur).lower()
+        if base and key in base:
+            hits.append(cur)
+            dirs[:] = []  # 命中就不再往里找
+
+    if not hits:
+        res["reason"] = "no_backup"
+        return res
+
+    removed = 0
+    with _LOCK:
+        for hit in hits:
+            rel = os.path.relpath(hit, root)
+            meta_dir = os.path.join(meta_root, rel)
+            if require_missing and os.path.isdir(meta_dir):
+                continue
+            try:
+                shutil.rmtree(hit)
+            except OSError as e:  # noqa: BLE001
+                logger.error(f"   [💾 清理] ❌ 删除备份失败 [{hit}]: {e}")
+                continue
+            removed += 1
+            res["dirs"].append(rel)
+            _prune_empty_parents(os.path.dirname(hit))
+
+    res["ok"] = removed > 0
+    if not res["ok"]:
+        res["reason"] = "kept"
+    res["removed"] = removed
+    return res
+
+
+def drop_for_deleted_item(item_path: str, item_name: str = "", fanhao: str = "") -> dict:
+    """Emby 报告「影片被真正删除」时调用：把备份里对应的快照删掉。
+
+    路径解析优先级：
+      1. ``item_path`` 在元数据根目录下 -> 直接取它所在目录；
+      2. ``item_path`` 在网盘挂载根下   -> 换算成元数据目录；
+      3. 都失败 -> 退化成按番号在备份树里匹配。
+    """
+    res = {"ok": False, "reason": "", "removed": "", "dir": ""}
+    if not is_enabled():
+        res["reason"] = "disabled"
+        return res
+
+    meta_root = _abspath(config.metadata_base_path())
+    mount_base = _abspath(config.mount_base_path())
+    p = _abspath(item_path) if item_path else ""
+
+    candidates: list[str] = []
+    if p:
+        parent = os.path.dirname(p)
+        if meta_root and rel_meta(parent) is not None:
+            candidates.append(parent)
+        if mount_base and (
+            p == mount_base or p.startswith(mount_base + os.sep) or p.startswith(mount_base + "/")
+        ):
+            try:
+                from ..services import fs  # 延迟导入，避免模块级循环依赖
+
+                candidates.append(fs.meta_dir_of(parent))
+            except Exception:  # noqa: BLE001
+                pass
+
+    seen: set[str] = set()
+    for cand in candidates:
+        key = _abspath(cand).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        r = drop_one(cand, require_missing=True)
+        if r["ok"]:
+            return r
+        res = {**r, "dir": cand}
+
+    fallback_key = fanhao or item_name
+    if fallback_key:
+        r = drop_by_fanhao(fallback_key, require_missing=True)
+        if r["ok"]:
+            return r
+        if not res.get("reason"):
+            res = {**res, "reason": r.get("reason", "")}
+
+    return res
+
+
+def prune_orphans() -> dict:
+    """清理孤儿备份：备份里有、元数据根目录里已经不存在的那一份，整份删掉。
+
+    用于补齐「容器停机期间发生的删除」。为了安全：
+    元数据根目录不存在时**直接拒绝执行**，避免挂载掉线时把备份清空。
+    """
+    res = {
+        "ok": False,
+        "removed": 0,
+        "dirs": [],
+        "errors": [],
+        "message": "",
+    }
+    if not is_enabled():
+        res["message"] = "未配置元数据备份目录"
+        return res
+    conflict = _backup_root_conflict()
+    if conflict:
+        res["message"] = conflict
+        return res
+
+    root = backup_root()
+    meta_root = config.metadata_base_path()
+    if not os.path.isdir(meta_root):
+        res["message"] = f"元数据根目录不存在，已取消清理以免误删全部备份：{meta_root}"
+        return res
+    if not os.path.isdir(root):
+        res["ok"] = True
+        res["message"] = "备份目录还不存在，无需清理"
+        return res
+
+    with _LOCK:
+        for cur, dirs, _files in os.walk(root, topdown=True):
+            keep = []
+            for d in list(dirs):
+                if d in _SYSTEM_DIRS:
+                    keep.append(d)
+                    continue
+                full = os.path.join(cur, d)
+                rel = os.path.relpath(full, root)
+                if os.path.isdir(os.path.join(meta_root, rel)):
+                    keep.append(d)
+                    continue
+                try:
+                    shutil.rmtree(full)
+                except OSError as e:  # noqa: BLE001
+                    if len(res["errors"]) < 20:
+                        res["errors"].append(f"{rel}: {e}")
+                    keep.append(d)
+                    continue
+                res["removed"] += 1
+                if len(res["dirs"]) < 200:
+                    res["dirs"].append(rel)
+            dirs[:] = keep
+
+    res["ok"] = True
+    res["message"] = f"清理完成：删除 {res['removed']} 个孤儿备份目录"
+    if res["errors"]:
+        res["message"] += f"，{len(res['errors'])} 个删除失败"
+    if res["removed"]:
+        logger.info(f"💾 [备份] {res['message']}")
+    return res
 
 
 # ---------------------------------------------------------------------------
