@@ -61,6 +61,35 @@ def _aux_dirs() -> set:
     return MOVIE_AUX_DIRS
 
 
+def _skip_abs_dirs() -> set:
+    """需要整体跳过的绝对路径集合（目前只有元数据备份目录）。
+
+    备份目录可能就放在元数据根内部，它下面没有 .strm，会被空间猎犬误判成
+    「空壳目录」并可能被删掉，所以扫描时必须跳过。
+    """
+    try:
+        root = config.meta_backup_path()
+    except Exception:  # noqa: BLE001
+        return set()
+    if not root:
+        return set()
+    return {os.path.normcase(os.path.abspath(root))}
+
+
+def _filter_subdirs(cur: str, dirs, aux=None, skip_abs=None) -> list:
+    """过滤子目录：去掉辅助目录与备份目录。"""
+    aux = _aux_dirs() if aux is None else aux
+    skip_abs = _skip_abs_dirs() if skip_abs is None else skip_abs
+    out = []
+    for d in dirs:
+        if d.lower() in aux:
+            continue
+        if skip_abs and os.path.normcase(os.path.abspath(os.path.join(cur, d))) in skip_abs:
+            continue
+        out.append(d)
+    return out
+
+
 def meta_scan_paths(kind: str = "dedup") -> list[str]:
     """返回实际用于扫描的路径列表（已过滤掉不存在的）。
 
@@ -328,6 +357,7 @@ def scan_empty_folders(paths: list[str] | None = None) -> dict:
     content_exts = [e.lower() for e in config.hound_content_exts()]
     video_exts = [e.lower() for e in VIDEO_EXTS]
     aux = _aux_dirs()
+    skip_abs = _skip_abs_dirs()
     total_folders = 0
 
     def dir_has_content(root: str, files) -> bool:
@@ -342,7 +372,7 @@ def scan_empty_folders(paths: list[str] | None = None) -> dict:
         for root, dirs, files in os.walk(base_path):
             if os.path.basename(root).lower() in aux:
                 continue
-            dirs[:] = [d for d in dirs if d.lower() not in aux]
+            dirs[:] = _filter_subdirs(root, dirs, aux, skip_abs)
             if dir_has_content(root, files):
                 dirs.clear()
             count += 1
@@ -397,7 +427,7 @@ def scan_empty_folders(paths: list[str] | None = None) -> dict:
             for root, dirs, files in os.walk(meta_path):
                 if os.path.basename(root).lower() in aux:
                     continue
-                dirs[:] = [d for d in dirs if d.lower() not in aux]
+                dirs[:] = _filter_subdirs(root, dirs, aux, skip_abs)
 
                 has_content = dir_has_content(root, files)
                 if has_content:

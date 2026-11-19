@@ -1542,6 +1542,9 @@
       }
 
       if (hint) {
+        const nestedTip = st.nested
+          ? "（备份目录在元数据根内部，扫描与同步已自动跳过它）"
+          : "";
         if (st.conflict) {
           hint.textContent = "⚠️ " + st.conflict;
           hint.className = "field-hint bad";
@@ -1549,10 +1552,10 @@
           hint.textContent = "留空则不启用备份；填写后洗板会自动维护快照";
           hint.className = "field-hint";
         } else if (!st.files) {
-          hint.textContent = `✅ 已启用（${st.root}），但备份目录还是空的，建议点「立即同步」建立初始快照`;
+          hint.textContent = `✅ 已启用（${st.root}），但备份目录还是空的，建议点「立即同步」建立初始快照${nestedTip}`;
           hint.className = "field-hint";
         } else {
-          hint.textContent = `✅ 已启用：${st.root} · ${st.dirs} 个目录 / ${st.files} 个文件`;
+          hint.textContent = `✅ 已启用：${st.root} · ${st.dirs} 个目录 / ${st.files} 个文件${nestedTip}`;
           hint.className = "field-hint";
         }
       }

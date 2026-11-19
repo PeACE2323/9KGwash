@@ -9,7 +9,9 @@
 
 做法
 ----
-在「元数据根目录」之外再放一份 **洗板前快照**（目录结构完全一致）：
+在「元数据根目录」之外再放一份 **洗板前快照**（目录结构完全一致）。
+备份目录放在元数据根目录之外或之内都可以：放在内部时，所有遍历都会
+自动跳过备份目录自身，不会出现「备份的备份」。
 
 * 手动「同步」：把整个元数据根目录里的元数据复制到备份目录，做初始快照；
 * 洗板结束后按胜负自动维护：
@@ -75,6 +77,9 @@ BACKUP_EXTS = frozenset(
 
 # 明确排除（即使将来白名单里误加，也不会备份/回滚 strm）
 SKIP_EXTS = frozenset({".strm"})
+
+# 系统残留目录，遍历时一律跳过
+_SYSTEM_DIRS = ("@eaDir", "#recycle", ".@__thumb")
 
 # 洗板后延迟备份的秒数（给刮削留时间）。测试可 monkeypatch 成 0。
 BACKUP_DELAY_SEC = 30
@@ -145,10 +150,36 @@ def backup_root() -> str:
     return config.meta_backup_path()
 
 
-def _backup_root_conflict() -> str:
-    """备份目录与元数据根重叠时返回错误说明（否则返回空串）。
+def _backup_root_abs() -> str:
+    """备份根目录的规范绝对路径（小写化，便于路径比较）；未启用返回空串。"""
+    root = backup_root()
+    return os.path.normcase(os.path.abspath(root)) if root else ""
 
-    重叠会导致「同步」把备份目录自身也扫进去，无限递归膨胀。
+
+def _backup_inside_meta() -> bool:
+    """备份目录是否位于元数据根目录内部。
+
+    这种布局是允许的（很多人的备份就放在同一个媒体盘里），但遍历元数据根时
+    必须把备份目录自身排除掉，否则「同步」会把自己的备份再备份一遍。
+    """
+    root = _backup_root_abs()
+    if not root:
+        return False
+    base = config.metadata_base_path()
+    if not base:
+        return False
+    b = os.path.normcase(os.path.abspath(base))
+    return root.startswith(b + os.sep) or root.startswith(b + "/")
+
+
+def _backup_root_conflict() -> str:
+    """备份目录与元数据根重叠到「无法安全运行」时返回错误说明（否则返回空串）。
+
+    只拦两种情况：
+      * 备份目录 == 元数据根目录（备份和原文件混在一起，无法区分）；
+      * 元数据根目录在备份目录内部（清理孤儿备份时会扫到原文件并误删）。
+
+    「备份目录在元数据根目录内部」是允许的，遍历时自动跳过它（见 _walk_files）。
     """
     root = config.meta_backup_path()
     if not root:
@@ -160,8 +191,6 @@ def _backup_root_conflict() -> str:
     b = _abspath(base)
     if r == b:
         return "备份目录不能与元数据根目录相同"
-    if r.startswith(b + os.sep) or r.startswith(b + "/"):
-        return f"备份目录不能放在元数据根目录内部（{base}）"
     if b.startswith(r + os.sep) or b.startswith(r + "/"):
         return f"元数据根目录不能放在备份目录内部（{root}）"
     return ""
@@ -195,10 +224,15 @@ def _copy_if_needed(src: str, dst: str) -> str:
 
 
 def _walk_files(root: str):
-    """遍历目录下所有文件（跳过隐藏的系统残留文件）。"""
+    """遍历目录下所有文件（跳过系统残留文件与备份目录自身）。"""
+    skip = _backup_root_abs()
     for cur, dirs, files in os.walk(root):
-        # 跳过 macOS/Windows 缩略图缓存目录
-        dirs[:] = [d for d in dirs if d not in ("@eaDir", "#recycle", ".@__thumb")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in _SYSTEM_DIRS
+            and os.path.normcase(os.path.abspath(os.path.join(cur, d))) != skip
+        ]
         for fn in files:
             if fn.startswith("._"):
                 continue
@@ -363,10 +397,6 @@ def restore_after_wash(meta_dir: str, skip_basenames=None) -> dict:
 # ---------------------------------------------------------------------------
 # 删除备份：影片真的没了，快照也要跟着没
 # ---------------------------------------------------------------------------
-
-# 系统残留目录，遍历时一律跳过
-_SYSTEM_DIRS = ("@eaDir", "#recycle", ".@__thumb")
-
 
 def _inside_backup(path: str) -> bool:
     """路径是否严格位于备份根目录内部（不含根目录本身）。"""
@@ -663,8 +693,15 @@ def sync_all() -> dict:
     logger.info(f"💾 [备份] 开始同步元数据：{src_root} -> {dst_root}")
 
     with _LOCK:
+        dst_abs = _backup_root_abs()
         for cur, dirs, files in os.walk(src_root):
-            dirs[:] = [d for d in dirs if d not in ("@eaDir", "#recycle", ".@__thumb")]
+            # 备份目录可能就在元数据根内部，必须跳过，否则会把备份再备份一遍
+            dirs[:] = [
+                d
+                for d in dirs
+                if d not in _SYSTEM_DIRS
+                and os.path.normcase(os.path.abspath(os.path.join(cur, d))) != dst_abs
+            ]
             res["dirs"] += 1
             for fn in files:
                 if fn.startswith("._"):
@@ -715,6 +752,7 @@ def status() -> dict:
         "root": backup_root(),
         "meta_root": config.metadata_base_path(),
         "conflict": _backup_root_conflict(),
+        "nested": _backup_inside_meta(),
         "dirs": 0,
         "files": 0,
         "bytes": 0,

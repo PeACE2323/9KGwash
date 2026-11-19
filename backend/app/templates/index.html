@@ -466,7 +466,7 @@
                 <span>元数据备份目录</span>
                 <div class="path-input-row">
                   <input type="text" id="cfg-backup" class="path-input"
-                         placeholder="留空 = 不启用；例如 /backup/metadata" autocomplete="off">
+                         placeholder="留空 = 不启用；例如 /backup/metadata 或 /media/.meta_backup" autocomplete="off">
                   <button type="button" class="btn btn-ghost btn-sm path-browse" data-target="cfg-backup">浏览</button>
                 </div>
                 <small class="field-hint" id="cfg-backup-hint"></small>
@@ -491,7 +491,9 @@
               ② <strong>新版本胜出</strong> → 把当前元数据覆盖到备份；<br>
               ③ <strong>新版本落败被删</strong> → 用备份把旧版本的海报/nfo 还原回元数据目录。<br>
               ④ <strong>影片被真正删除</strong>（例如在 Emby 里手动删除）→ 备份里对应的那份也一起删掉，
-              快照不会越积越多。停机期间发生的删除，点「清理孤儿备份」补齐。
+              快照不会越积越多。停机期间发生的删除，点「清理孤儿备份」补齐。<br>
+              备份目录可以放在元数据根目录<strong>之外</strong>，也可以放在它<strong>内部</strong>
+              （放在内部时，空间猎犬扫描与「立即同步」都会自动跳过它，不会出现「备份的备份」）。
             </p>
           </div>
 

@@ -246,16 +246,41 @@ check("AAA 的 strm 未同步",
 r = meta_backup.sync_all()
 check("二次同步全部跳过", r.get("copied") == 0 and r.get("skipped") == 4, r)
 
-# 备份目录嵌在元数据根内部 -> 拒绝（否则会无限自我复制）
-client.post("/api/config", json={
-    "META_BACKUP_PATH": os.path.join(METAROOT, "_backup").replace("\\", "/")
-})
+# 备份目录放在元数据根「内部」：允许（很多人的备份就在同一个媒体盘里），
+# 但遍历元数据根时必须跳过备份目录自身，否则会把备份再备份一遍。
+NESTED = os.path.join(METAROOT, "_backup")
+client.post("/api/config", json={"META_BACKUP_PATH": NESTED.replace("\\", "/")})
 st = client.get("/api/meta_backup/status").get_json()
-check("嵌套备份目录被识别为冲突", bool(st.get("conflict")), st.get("conflict"))
+check("备份目录放在元数据根内部不再报冲突", st.get("conflict") == "", st.get("conflict"))
+check("status 标记为 nested", st.get("nested") is True, st.get("nested"))
 r = meta_backup.sync_all()
-check("冲突时同步被拒绝", r.get("ok") is False, r)
+check("嵌套时同步照常成功", r.get("ok") is True, r)
+check("嵌套时仍然只统计 4 个元数据文件", r.get("files") == 4, r.get("files"))
+check("嵌套时备份落在元数据根内部",
+      os.path.exists(os.path.join(NESTED, "STRM", "AAA-001", "AAA-001.nfo")))
+check("嵌套时没有把备份自己再备份一遍", not os.path.exists(os.path.join(NESTED, "_backup")))
+check("嵌套时没有把备份目录当成影片目录", not os.path.isdir(os.path.join(NESTED, "_backup", "STRM")))
+r = meta_backup.sync_all()
+check("嵌套时二次同步仍然全部跳过", r.get("copied") == 0 and r.get("skipped") == 4, r)
+shutil.rmtree(NESTED, ignore_errors=True)
+
+# 真正无法安全运行的两种重叠仍然拒绝
+client.post("/api/config", json={"META_BACKUP_PATH": METAROOT.replace("\\", "/")})
+st = client.get("/api/meta_backup/status").get_json()
+check("备份目录等于元数据根目录被拒绝", bool(st.get("conflict")), st.get("conflict"))
+check("此时 nested 为 False", st.get("nested") is False, st.get("nested"))
+r = meta_backup.sync_all()
+check("路径相同时同步被拒绝", r.get("ok") is False, r)
+
+client.post("/api/config", json={"META_BACKUP_PATH": TMP.replace("\\", "/")})
+st = client.get("/api/meta_backup/status").get_json()
+check("元数据根目录在备份目录内部被拒绝", bool(st.get("conflict")), st.get("conflict"))
+r = meta_backup.prune_orphans()
+check("这种配置下清理孤儿备份也被拒绝", r.get("ok") is False, r)
+
 client.post("/api/config", json={"META_BACKUP_PATH": BACKUP.replace("\\", "/")})
 check("恢复合法路径后不再冲突", meta_backup.status().get("conflict") == "")
+check("恢复合法路径后 nested 为 False", meta_backup.status().get("nested") is False)
 
 # API
 r = client.get("/api/meta_backup/status").get_json()
@@ -466,6 +491,26 @@ check("drop 接口：元数据目录还在时拒绝",
       r.get("success") is False and r.get("reason") == "kept", r)
 
 # ===========================================================================
+print("\n=== N. 备份目录放在元数据根内部时，猎犬扫描跳过它 ===")
+reset()
+from app.services import library  # noqa: E402
+
+NESTED = os.path.join(METAROOT, "_backup")
+client.post("/api/config", json={"META_BACKUP_PATH": NESTED.replace("\\", "/")})
+mk_meta("ABP-820", ["ABP-820.nfo", "ABP-820.strm", "poster.jpg"])
+# 备份目录里的内容没有 .strm，如果没被跳过就会被猎犬当成「空壳」删掉
+os.makedirs(os.path.join(NESTED, "STRM", "ABP-821"), exist_ok=True)
+with open(os.path.join(NESTED, "STRM", "ABP-821", "poster.jpg"), "w", encoding="utf-8") as f:
+    f.write("x")
+res = library.scan_empty_folders([METAROOT])
+flagged = [str(p) for p in (res.get("empty_meta") or [])]
+check("猎犬没有把备份目录当成空壳", not any("_backup" in p for p in flagged), flagged)
+check("备份目录里的文件原样保留",
+      os.path.isfile(os.path.join(NESTED, "STRM", "ABP-821", "poster.jpg")))
+check("正常影片目录也没被误判", not any("ABP-820" in p for p in flagged), flagged)
+client.post("/api/config", json={"META_BACKUP_PATH": BACKUP.replace("\\", "/")})
+
+# ===========================================================================
 print("\n=== K. 前端结构 ===")
 HTML = open(os.path.join(BASE, "app", "templates", "index.html"), encoding="utf-8").read()
 JS = open(os.path.join(BASE, "app", "static", "js", "app.js"), encoding="utf-8").read()
@@ -482,6 +527,8 @@ check("JS 实现清理逻辑", "async function pruneBackup" in JS)
 check("JS 实现状态刷新", "async function loadBackupStatus" in JS)
 check("切换视图时加载备份状态", "loadBackupStatus();" in JS)
 check("CSS 有备份样式", ".bk-actions" in CSS and ".bk-status" in CSS)
+check("说明里写清备份目录可以放在元数据根内部", "内部" in HTML and "自动跳过它" in HTML)
+check("JS 会显示嵌套提示", "st.nested" in JS and "备份目录在元数据根内部" in JS)
 
 print("\n" + "=" * 50)
 print(f"结果: {PASS} 通过, {FAIL} 失败")
