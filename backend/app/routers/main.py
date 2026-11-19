@@ -25,7 +25,7 @@ from flask import Blueprint, jsonify, render_template, request
 
 from .. import __version__, config, version_full
 from ..logging_setup import logger
-from ..services import history, library, webhooks
+from ..services import history, library, meta_backup, webhooks
 from ..services.fanhao import main_fanhao
 
 bp = Blueprint("main", __name__)
@@ -420,6 +420,12 @@ def update_config():
             payload["META_SUBDIR_OVERRIDE"] = v if v and v != "/" else ""
             path_changes["META_SUBDIR_OVERRIDE"] = payload["META_SUBDIR_OVERRIDE"]
 
+        # ---- 元数据备份目录（空 = 不启用备份/回滚）----
+        if "META_BACKUP_PATH" in data:
+            v = _norm_cfg_path(data.get("META_BACKUP_PATH"))
+            payload["META_BACKUP_PATH"] = v if v and v != "/" else ""
+            path_changes["META_BACKUP_PATH"] = payload["META_BACKUP_PATH"]
+
         success, res = config.save_config(payload)
 
         if success:
@@ -611,6 +617,51 @@ def path_check():
 
 
 # ---------------------------------------------------------------------------
+# 元数据备份 / 回滚
+# ---------------------------------------------------------------------------
+@bp.route("/api/meta_backup/status", methods=["GET"])
+def api_meta_backup_status():
+    """备份功能状态：是否启用、目录规模、最近一次同步结果。"""
+    return jsonify({"success": True, **meta_backup.status()})
+
+
+@bp.route("/api/meta_backup/sync", methods=["POST"])
+def api_meta_backup_sync():
+    """把整个元数据根目录的元数据同步到备份目录（增量复制）。"""
+    result = meta_backup.sync_all()
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@bp.route("/api/meta_backup/backup", methods=["POST"])
+def api_meta_backup_backup():
+    """手动把单个元数据目录备份到备份目录。
+
+    请求体：{"dir": "<元数据目录绝对路径>"}（相对路径按元数据根解析）
+    """
+    data = request.get_json(silent=True) or {}
+    target = _norm_cfg_path(data.get("dir"))
+    if not target:
+        return jsonify({"success": False, "error": "缺少 dir 参数"}), 400
+    if not os.path.isabs(target):
+        target = os.path.join(config.metadata_base_path(), target.lstrip("/\\"))
+    result = meta_backup.backup_one(target)
+    return jsonify({"success": result.get("ok"), **result}), (200 if result.get("ok") else 400)
+
+
+@bp.route("/api/meta_backup/restore", methods=["POST"])
+def api_meta_backup_restore():
+    """手动用备份目录覆盖回单个元数据目录（会覆盖海报/nfo）。"""
+    data = request.get_json(silent=True) or {}
+    target = _norm_cfg_path(data.get("dir"))
+    if not target:
+        return jsonify({"success": False, "error": "缺少 dir 参数"}), 400
+    if not os.path.isabs(target):
+        target = os.path.join(config.metadata_base_path(), target.lstrip("/\\"))
+    result = meta_backup.restore_one(target)
+    return jsonify({"success": result.get("ok"), **result}), (200 if result.get("ok") else 400)
+
+
+# ---------------------------------------------------------------------------
 # 查重
 # ---------------------------------------------------------------------------
 @bp.route("/api/scan_duplicates", methods=["GET"])
@@ -716,6 +767,8 @@ def api_status():
             "dedup_scan_paths": config.dedup_scan_paths(),
             "default_scan_paths": config.default_meta_scan_paths(),
             "meta_subdir_override": cfg.get("META_SUBDIR_OVERRIDE") or "",
+            # 元数据备份目录（空 = 未启用备份/回滚）
+            "meta_backup_path": cfg.get("META_BACKUP_PATH") or "",
             # 空间猎犬的内容后缀白名单（生效值 + 默认值，供界面「恢复默认」用）
             "hound_content_exts": config.hound_content_exts(),
             "default_hound_content_exts": list(config.DEFAULT_HOUND_CONTENT_EXTS),

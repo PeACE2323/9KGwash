@@ -1937,6 +1937,37 @@ html[data-theme="light"] .log-tab.active .log-tab-count {
 }
 .field-hint.bad { color: var(--red-text); }
 
+/* ---------- 元数据备份 ---------- */
+.bk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.bk-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 12px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+.bk-stat b {
+  color: var(--text);
+  font-weight: 700;
+}
+.bk-tip {
+  margin-top: 12px;
+  line-height: 1.9;
+}
+
 /* ---------- 目录选择器：快捷跳转 ---------- */
 .browser-quick {
   display: flex;

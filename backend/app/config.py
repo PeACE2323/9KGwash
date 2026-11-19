@@ -57,6 +57,12 @@ DEFAULT_CONFIG = {
     # 目录里只要存在这些后缀的文件，就认为目录有内容、不算空壳。
     # 空列表时回退到 DEFAULT_HOUND_CONTENT_EXTS。
     "HOUND_CONTENT_EXTS": [],
+    # 元数据备份目录（空 = 不启用）。
+    # 用途：刮削会覆盖同番号旧版本的海报/nfo，若新版权重更低被洗掉，
+    # 海报就回不来了。这里保存一份「洗板前的元数据快照」，
+    # 洗板判定旧版本胜出时用它把元数据回滚回去。
+    # 目录结构与 METADATA_BASE_PATH 完全一致，便于按相对路径映射。
+    "META_BACKUP_PATH": "",
 }
 
 # 空间猎犬默认的内容后缀：含 .strm 与常见视频格式。
@@ -702,6 +708,9 @@ def normalize_config(cfg: dict) -> dict:
     # 猎犬内容后缀：统一为小写带点的形式；空列表表示使用默认值
     out["HOUND_CONTENT_EXTS"] = normalize_ext_list(out.get("HOUND_CONTENT_EXTS"))
 
+    # 元数据备份目录：统一斜杠，空表示不启用
+    out["META_BACKUP_PATH"] = _norm_slash(out.get("META_BACKUP_PATH") or "")
+
     mount = _norm_slash(out.get("MOUNT_BASE_PATH") or "")
     raw_dirs = out.get("WATCHED_DIRS") or []
     if isinstance(raw_dirs, str):
@@ -854,6 +863,15 @@ def mount_base_path() -> str:
 
 def metadata_base_path() -> str:
     return current_config().get("METADATA_BASE_PATH", "/metadata")
+
+
+def meta_backup_path() -> str:
+    """元数据备份目录（空字符串 = 未启用备份功能）。"""
+    return _norm_slash(current_config().get("META_BACKUP_PATH") or "")
+
+
+def meta_backup_enabled() -> bool:
+    return bool(meta_backup_path())
 
 
 def watched_dirs() -> list[str]:

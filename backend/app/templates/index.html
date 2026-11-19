@@ -446,6 +446,52 @@
             </button>
           </div>
 
+          <div class="card">
+            <div class="card-head">
+              <h2>🗂️ 元数据备份</h2>
+              <div class="head-tools">
+                <span class="status-msg" id="bk-msg"></span>
+                <button class="btn btn-ghost btn-sm" id="bk-refresh">刷新状态</button>
+              </div>
+            </div>
+            <p class="view-tip">
+              刮削是<strong>先刮后洗</strong>，新版本落盘时会用自己的截图覆盖同目录的 <code>poster.jpg</code>。
+              如果新版本权重更低、随后被洗掉，旧版本的封面就回不来了。<br>
+              这里保存一份<strong>洗板前的元数据快照</strong>，洗板判定旧版本胜出时自动把海报/nfo/字幕还原回去。<br>
+              备份范围：<strong>图片 + nfo + json + 字幕</strong>（<strong>不含 .strm</strong>，strm 由 CMS 按网盘实际文件生成）。
+            </p>
+
+            <div class="path-form">
+              <label class="field">
+                <span>元数据备份目录</span>
+                <div class="path-input-row">
+                  <input type="text" id="cfg-backup" class="path-input"
+                         placeholder="留空 = 不启用；例如 /backup/metadata" autocomplete="off">
+                  <button type="button" class="btn btn-ghost btn-sm path-browse" data-target="cfg-backup">浏览</button>
+                </div>
+                <small class="field-hint" id="cfg-backup-hint"></small>
+              </label>
+            </div>
+
+            <div class="bk-actions">
+              <button class="btn btn-primary" id="bk-save">💾 保存备份目录</button>
+              <button class="btn btn-ghost" id="bk-sync" disabled>🔄 立即同步</button>
+            </div>
+
+            <div class="bk-status" id="bk-status">
+              <span class="bk-stat"><b id="bk-files">0</b> 个元数据文件</span>
+              <span class="bk-stat"><b id="bk-size">0 B</b></span>
+              <span class="bk-stat" id="bk-last">尚未同步</span>
+            </div>
+
+            <p class="view-tip bk-tip">
+              洗板结束后会自动维护快照：<br>
+              ① <strong>只有一个版本</strong>（无需洗板）→ 把新影片的元数据写入备份；<br>
+              ② <strong>新版本胜出</strong> → 把当前元数据覆盖到备份；<br>
+              ③ <strong>新版本落败被删</strong> → 用备份把旧版本的海报/nfo 还原回元数据目录。
+            </p>
+          </div>
+
         </section>
 
         <!-- ---------- 视图：活动日志 ---------- -->

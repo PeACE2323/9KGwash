@@ -3,7 +3,7 @@
 import os
 
 # 基础语义版本号：功能有迭代时手动递增
-BASE_VERSION = "9.16.0"
+BASE_VERSION = "9.17.0"
 
 __version__ = BASE_VERSION
 
@@ -25,8 +25,8 @@ def _build_info() -> dict:
 def version_full() -> str:
     """完整版本字符串，用于界面右下角展示。
 
-    形如： v9.16.0+1b2ab11 · 2026-11-02
-    没有构建信息时退化为 v9.16.0。
+    形如： v9.17.0+1b2ab11 · 2026-11-19
+    没有构建信息时退化为 v9.17.0。
     """
     info = _build_info()
     commit = info["commit"]

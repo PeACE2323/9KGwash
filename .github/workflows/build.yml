@@ -198,6 +198,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_wash_switch
 
+      - name: 运行元数据备份测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_meta_backup
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test

@@ -188,6 +188,7 @@
     if (name === "config") {
       // 运行配置页：Webhook 状态 + 存储路径表单（需要 /api/status 回填）
       loadStatus();
+      loadBackupStatus();
     }
     if (name === "hound" || name === "dedup") loadScanPaths(name);
     if (name === "hound") {
@@ -1304,12 +1305,14 @@
     const mountEl = $("cfg-mount");
     const metaEl = $("cfg-meta");
     const subEl = $("cfg-meta-sub");
+    const bkEl = $("cfg-backup");
     if (!mountEl || !metaEl) return;
 
     if (!pathForm.loaded || !pathForm.dirty) {
       mountEl.value = st.mount_base_path || "";
       metaEl.value = st.metadata_base_path || "";
       if (subEl) subEl.value = st.meta_subdir_override || "";
+      if (bkEl) bkEl.value = st.meta_backup_path || "";
       pathForm.loaded = true;
       updatePathHints(st);
     }
@@ -1476,6 +1479,127 @@
       pathMsg._t = setTimeout(() => {
         el.textContent = "";
       }, 4000);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 元数据备份
+  // -------------------------------------------------------------------------
+  function fmtBytes(n) {
+    const v = Number(n) || 0;
+    if (v < 1024) return v + " B";
+    const units = ["KB", "MB", "GB", "TB"];
+    let x = v / 1024;
+    let i = 0;
+    while (x >= 1024 && i < units.length - 1) {
+      x /= 1024;
+      i++;
+    }
+    return (x >= 10 ? x.toFixed(0) : x.toFixed(1)) + " " + units[i];
+  }
+
+  function bkMsg(text, kind) {
+    const el = $("bk-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "status-msg" + (kind ? " " + kind : "");
+    if (text) {
+      clearTimeout(bkMsg._t);
+      bkMsg._t = setTimeout(() => {
+        el.textContent = "";
+      }, 5000);
+    }
+  }
+
+  async function loadBackupStatus() {
+    if (!$("bk-status")) return;
+    try {
+      const st = await api("/api/meta_backup/status");
+      const filesEl = $("bk-files");
+      const sizeEl = $("bk-size");
+      const lastEl = $("bk-last");
+      const syncBtn = $("bk-sync");
+      const hint = $("cfg-backup-hint");
+
+      if (filesEl) filesEl.textContent = st.files || 0;
+      if (sizeEl) sizeEl.textContent = fmtBytes(st.bytes);
+      if (syncBtn) syncBtn.disabled = !st.enabled || !!st.conflict;
+
+      if (lastEl) {
+        const ls = st.last_sync || {};
+        if (!st.enabled) {
+          lastEl.textContent = "未启用";
+        } else if (ls.at) {
+          const d = new Date(ls.at * 1000);
+          const hh = String(d.getHours()).padStart(2, "0");
+          const mm = String(d.getMinutes()).padStart(2, "0");
+          lastEl.textContent = `上次同步 ${hh}:${mm} · 新增 ${ls.copied || 0} / 跳过 ${ls.skipped || 0}`;
+        } else {
+          lastEl.textContent = "尚未同步";
+        }
+      }
+
+      if (hint) {
+        if (st.conflict) {
+          hint.textContent = "⚠️ " + st.conflict;
+          hint.className = "field-hint bad";
+        } else if (!st.enabled) {
+          hint.textContent = "留空则不启用备份；填写后洗板会自动维护快照";
+          hint.className = "field-hint";
+        } else if (!st.files) {
+          hint.textContent = `✅ 已启用（${st.root}），但备份目录还是空的，建议点「立即同步」建立初始快照`;
+          hint.className = "field-hint";
+        } else {
+          hint.textContent = `✅ 已启用：${st.root} · ${st.dirs} 个目录 / ${st.files} 个文件`;
+          hint.className = "field-hint";
+        }
+      }
+    } catch (e) {
+      /* 静默 */
+    }
+  }
+
+  async function saveBackupPath() {
+    const el = $("cfg-backup");
+    if (!el) return;
+    const btn = $("bk-save");
+    btn.disabled = true;
+    try {
+      const data = await apiPost("/api/config", { META_BACKUP_PATH: (el.value || "").trim() });
+      if (data.success) {
+        bkMsg("已保存并生效", "ok");
+        toast("元数据备份目录已更新");
+        await loadStatus();
+        await loadBackupStatus();
+      } else {
+        bkMsg(data.error || "保存失败", "bad");
+      }
+    } catch (e) {
+      bkMsg("保存失败：" + e.message, "bad");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function syncBackup() {
+    const btn = $("bk-sync");
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "⏳ 同步中…";
+    bkMsg("正在同步，文件较多时需要一会儿…");
+    try {
+      const data = await apiPost("/api/meta_backup/sync", {});
+      if (data.ok) {
+        bkMsg(data.message || "同步完成", "ok");
+        toast(data.message || "同步完成");
+      } else {
+        bkMsg(data.message || "同步失败", "bad");
+      }
+    } catch (e) {
+      bkMsg("同步失败：" + e.message, "bad");
+    } finally {
+      btn.textContent = old;
+      await loadBackupStatus();
     }
   }
 
@@ -2594,6 +2718,11 @@
       pathMsg("已恢复为当前生效值", "ok");
       loadStatus();
     });
+
+    // 元数据备份
+    if ($("bk-save")) $("bk-save").addEventListener("click", saveBackupPath);
+    if ($("bk-sync")) $("bk-sync").addEventListener("click", syncBackup);
+    if ($("bk-refresh")) $("bk-refresh").addEventListener("click", loadBackupStatus);
 
     // 委托：点击带 data-copy 的元素即复制
     document.addEventListener("click", (e) => {

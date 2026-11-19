@@ -22,7 +22,7 @@ import threading
 
 from .. import config
 from ..logging_setup import categorized
-from ..services import cms, fs, history
+from ..services import cms, fs, history, meta_backup
 from ..services.fanhao import (
     VIDEO_EXTS,
     get_weight_and_fanhao,
@@ -37,6 +37,14 @@ logger = categorized("wash")
 _PART_DISPLAY_RE = re.compile(
     r"[-_]?(CD[1-9]|PART[A-E])(?![a-zA-Z0-9])$|[-_][AB](?![a-zA-Z0-9])$", re.IGNORECASE
 )
+
+
+def _norm_path(p: str) -> str:
+    """路径归一化，仅用于「同一个文件」的集合比较（不用于拼接）。"""
+    try:
+        return os.path.normcase(os.path.abspath(str(p)))
+    except Exception:  # noqa: BLE001
+        return str(p)
 
 
 def build_versions(competitors: list[dict]) -> list[dict]:
@@ -165,12 +173,21 @@ def _process_xiban_locked(file_path: str) -> None:
 
     versions = build_versions(competitors)
 
+    # 触发本次洗板的那个文件所属的元数据目录（同番号各版本通常共用同一个目录）
+    trigger_meta_dir = fs.meta_dir_of(os.path.dirname(file_path))
+
     if len(versions) <= 1:
         logger.info(f"ℹ️ [跳过] 库中 JAV 目标 [{target_canonical}] 仅有 1 个版本队列，无需洗板。")
+        # 情况①：没有对决 -> 这是新影片，把它的元数据补进备份目录。
+        # 延迟执行，等刮削把海报/nfo 写完之后再快照。
+        if not config.get_dry_run():
+            meta_backup.backup_after_wash(trigger_meta_dir)
         cms.trigger_cms("发现新文件落盘(仅单队列)")
         return
 
     actually_killed_metadata: set[str] = set()
+    # 被物理删除的视频文件（用于判断「触发文件是不是输家」）
+    killed_paths: set[str] = set()
     washed_anything = False
     dry_run = config.get_dry_run()
 
@@ -243,6 +260,7 @@ def _process_xiban_locked(file_path: str) -> None:
                 if os.path.exists(loser["path"]):
                     try:
                         os.remove(loser["path"])
+                        killed_paths.add(_norm_path(loser["path"]))
                         logger.info(f"   [-] ✅ 成功降维删除 {reason}: {os.path.basename(loser['path'])}")
                         washed_anything = True
                     except Exception as e:  # noqa: BLE001
@@ -263,6 +281,29 @@ def _process_xiban_locked(file_path: str) -> None:
         logger.info(
             f"   [🛡️ 拦截器就绪] 准确记录了 {len(actually_killed_metadata)} 项清理特征进入档案，等待防御 Emby 延迟通知。"
         )
+
+    # ------------------------------------------------------------------
+    # 元数据备份 / 回滚
+    #
+    # 刮削是「先刮后洗」，新版本落盘时已经把同目录的 poster.jpg / nfo
+    # 覆盖成自己的了。于是：
+    #   ② 新版本胜出（触发文件没被删）-> 当前元数据就是对的，存进备份；
+    #   ③ 新版本落败（触发文件被删）  -> 当前元数据是「已删除版本」的，
+    #      必须用备份里的旧元数据覆盖回去，否则封面永久丢失。
+    # ------------------------------------------------------------------
+    if not dry_run and meta_backup.is_enabled():
+        if _norm_path(file_path) in killed_paths:
+            logger.info(
+                f"   [💾 回滚] 新版本 [{os.path.basename(file_path)}] 落败被删，"
+                f"正在用备份还原旧版本的元数据（海报/nfo/字幕）…"
+            )
+            meta_backup.restore_after_wash(trigger_meta_dir, skip_basenames=actually_killed_metadata)
+        else:
+            logger.info(
+                f"   [💾 备份] 新版本 [{os.path.basename(file_path)}] 胜出，"
+                f"稍后把当前元数据快照到备份目录。"
+            )
+            meta_backup.backup_after_wash(trigger_meta_dir)
 
     if washed_anything or len(versions) > 1:
         cms.trigger_cms("洗板判定与清理流程结束")
