@@ -3,7 +3,7 @@
 import os
 
 # 基础语义版本号：功能有迭代时手动递增
-BASE_VERSION = "9.19.0"
+BASE_VERSION = "9.20.0"
 
 __version__ = BASE_VERSION
 

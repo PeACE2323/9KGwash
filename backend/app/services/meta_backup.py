@@ -82,7 +82,12 @@ SKIP_EXTS = frozenset({".strm"})
 _SYSTEM_DIRS = ("@eaDir", "#recycle", ".@__thumb")
 
 # 洗板后延迟备份的秒数（给刮削留时间）。测试可 monkeypatch 成 0。
-BACKUP_DELAY_SEC = 30
+#
+# 注意：CMS 唤醒现在走 ``cms.CMS_DEBOUNCE_SEC``（10 秒）的落盘缓冲窗口，
+# 也就是说「洗板结束」到「CMS 真正开始刮削」之间还要再等约 10 秒。
+# 这个延迟必须把那段也算进去，否则会在刮削还没写完时就拍下不完整的快照
+# （典型症状：备份里只有 nfo / 没有海报）。
+BACKUP_DELAY_SEC = 45
 
 # 串行化：同步按钮与洗板后的自动备份可能同时跑
 _LOCK = threading.RLock()

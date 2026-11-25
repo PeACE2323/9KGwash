@@ -204,6 +204,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m tests.test_meta_backup
 
+      - name: 运行 CMS 唤醒防抖测试
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m tests.test_cms_debounce
+
   # ---------- 构建并推送 GHCR ----------
   build:
     needs: test
